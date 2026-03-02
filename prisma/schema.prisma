@@ -1,0 +1,204 @@
+// 趋势聚合 SaaS - 数据库模型
+// 设计原则：多数据源数据存不同表，表名/模型名带数据源前缀便于识别；字段对齐各站列表表头（排行、工具、月访问量等）
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// 数据源表：每个 trends 网站一条记录（与 config/sources.ts 的 slug 对应）
+model DataSource {
+  id        String   @id @default(cuid())
+  slug      String   @unique // URL 用，如 toolify
+  name      String   // 展示名，如 "Toolify AI Tools"
+  baseUrl   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  toolifyTrendItems     ToolifyTrendItem[]
+  githubTrendItems      GitHubTrendItem[]
+  productHuntTrendItems ProductHuntTrendItem[]
+  googleTrendItems      GoogleTrendItem[]
+
+  @@map("data_source")
+}
+
+/// 趋势条目（列表行）- 数据源：Toolify；表头：排行 | 工具 | 月访问量 | 增长 | 增长率 | 介绍 | 标签
+model ToolifyTrendItem {
+  id         String   @id @default(cuid())
+  sourceId   String
+  source     DataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  externalId String   // 数据源站点条目唯一 ID，用于去重
+  slug       String   // 详情页 URL 用
+
+  rank           Int?    // 排行
+  name           String  // 工具名称
+  url            String? // 工具链接
+  monthlyVisits  BigInt? // 月访问量（存数值便于排序，超 32 位用 BigInt）
+  growthDisplay  String? // 增长（页面展示值，如 "333.3M"）
+  growthRate     Float?  // 增长率（如 19.21 表示 19.21%）
+  summary        String? // 介绍（列表用短描述）
+  tags           String? // 标签（逗号分隔）
+
+  snapshotAt DateTime // 采集日期（按天）
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  toolifyDetail ToolifyTrendDetail?
+
+  @@unique([sourceId, externalId, snapshotAt])
+  @@index([sourceId, snapshotAt])
+  @@index([sourceId, slug])
+  @@map("toolify_trend_item")
+}
+
+/// 趋势详情 - 数据源：Toolify；每条目的详情内容（长介绍、原始 JSON 等）
+model ToolifyTrendDetail {
+  id          String   @id @default(cuid())
+  trendId     String   @unique
+  trend       ToolifyTrendItem @relation(fields: [trendId], references: [id], onDelete: Cascade)
+  description String?  // 详情页用长描述
+  rawJson     String?  // 各站自定义字段 JSON
+  fetchedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("toolify_trend_detail")
+}
+
+/// 趋势条目（列表行）- 数据源：GitHub Trending Repositories
+/// 字段对齐 GitHub 趋势页：仓库名(owner/repo)、描述、语言、星标、Fork、今日新增星标、Built by 等
+model GitHubTrendItem {
+  id         String   @id @default(cuid())
+  sourceId   String
+  source     DataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  externalId String   // 数据源唯一 ID，如 "owner/repo"
+  slug       String   // 详情页 URL 用，如 "owner-repo"
+
+  rank         Int?    // 排行（趋势列表顺序）
+  repoFullName String  // 仓库全名，如 "ruvnet/wifi-densepose"
+  description  String? // 仓库描述
+  language     String? // 主要编程语言，如 "Python", "TypeScript"
+  stars        Int    // 总星标数
+  forks        Int    @default(0) // Fork 数
+  starsToday   Int    @default(0) // 当日/当周新增星标（与 dateRange 对应）；增长率由 今日新增/星标数 计算展示
+  dateRange    String? // 趋势区间，如 "today", "weekly", "monthly"
+  builtByJson  String? // 贡献者头像等 JSON，如 ["avatarUrl1", "avatarUrl2"]
+  url          String? // 仓库链接，如 https://github.com/owner/repo
+
+  snapshotAt DateTime // 采集日期（按天）
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  githubDetail GitHubTrendDetail?
+
+  @@unique([sourceId, externalId, snapshotAt])
+  @@index([sourceId, snapshotAt])
+  @@index([sourceId, slug])
+  @@map("github_trend_item")
+}
+
+/// 趋势详情 - 数据源：GitHub；每条目的详情内容（长描述、README 摘要、原始 JSON 等）
+model GitHubTrendDetail {
+  id          String   @id @default(cuid())
+  trendId     String   @unique
+  trend       GitHubTrendItem @relation(fields: [trendId], references: [id], onDelete: Cascade)
+  description String?  // 详情页用长描述
+  rawJson     String?  // 各站自定义字段 JSON
+  fetchedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("github_trend_detail")
+}
+
+/// 趋势条目（列表行）- 数据源：Product Hunt 热点商品
+/// 字段对齐 Product Hunt 列表：排行、图标、产品名、描述、类别、评论数、点赞数
+model ProductHuntTrendItem {
+  id         String   @id @default(cuid())
+  sourceId   String
+  source     DataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  externalId String   // 数据源唯一 ID（如产品 slug）
+  slug       String   // 详情页 URL 用
+
+  rank          Int?    // 排行
+  name          String  // 产品名称
+  description   String? // 一句话描述
+  iconUrl       String? // 产品图标 URL
+  categories    String? // 类别/标签，逗号分隔，如 "Productivity • Developer Tools • AI"
+  commentCount  Int     @default(0) // 评论数
+  upvoteCount   Int     @default(0) // 点赞数
+  url           String? // 产品链接（Product Hunt 或官网）
+
+  snapshotAt DateTime // 采集日期（按天）
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  productHuntDetail ProductHuntTrendDetail?
+
+  @@unique([sourceId, externalId, snapshotAt])
+  @@index([sourceId, snapshotAt])
+  @@index([sourceId, slug])
+  @@map("product_hunt_trend_item")
+}
+
+/// 趋势详情 - 数据源：Product Hunt；每条目的详情内容（长描述、原始 JSON 等）
+model ProductHuntTrendDetail {
+  id          String   @id @default(cuid())
+  trendId     String   @unique
+  trend       ProductHuntTrendItem @relation(fields: [trendId], references: [id], onDelete: Cascade)
+  description String?  // 详情页用长描述
+  rawJson     String?  // 各站自定义字段 JSON
+  fetchedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("product_hunt_trend_detail")
+}
+
+/// 趋势条目（列表行）- 数据源：Google 趋势
+/// 字段对齐 Google 趋势页：趋势名称、搜索量、增长百分比、开始时间、活跃、趋势细分（相关词条）
+model GoogleTrendItem {
+  id         String   @id @default(cuid())
+  sourceId   String
+  source     DataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  externalId String   // 数据源唯一 ID（如趋势词条名）
+  slug       String   // 详情页 URL 用
+
+  rank               Int?     // 排行（列表顺序）
+  name               String   // 趋势名称，如 "iran", "dubai"
+  searchVolume       BigInt?  // 搜索量原始数值（便于排序），如 5000000
+  searchVolumeDisplay String? // 展示用，如 "500万+", "50万+"
+  growthRate         Float?   // 增长百分比，如 1000 表示 ↑1000%
+  startedAt          DateTime? // 趋势开始时间
+  endedAt            DateTime? // 趋势结束时间
+  isActive           Boolean  @default(true) // 是否活跃
+  relatedKeywords    String?  // 相关关键词，JSON 数组字符串，如 ["iran news","khamenei"]
+  moreRelatedCount   Int?     // 还有另外 N 个相关词条
+
+  snapshotAt DateTime // 采集时间
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  googleDetail GoogleTrendDetail?
+
+  @@unique([sourceId, externalId, snapshotAt])
+  @@index([sourceId, snapshotAt])
+  @@index([sourceId, slug])
+  @@map("google_trend_item")
+}
+
+/// 趋势详情 - 数据源：Google 趋势；每条目的详情内容（长描述、原始 JSON 等）
+model GoogleTrendDetail {
+  id          String   @id @default(cuid())
+  trendId     String   @unique
+  trend       GoogleTrendItem @relation(fields: [trendId], references: [id], onDelete: Cascade)
+  description String?  // 详情页用长描述
+  rawJson     String?  // 各站自定义字段 JSON
+  fetchedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("google_trend_detail")
+}
