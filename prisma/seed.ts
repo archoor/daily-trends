@@ -302,7 +302,8 @@ async function main() {
     const externalId = row.repoFullName;
     const slug = repoToSlug(externalId);
     try {
-      await prisma.githubTrendItem.upsert({
+      // 注意：Prisma 根据模型名 GitHubTrendItem 生成的 client 属性是 gitHubTrendItem（H 大写）
+      await prisma.gitHubTrendItem.upsert({
         where: {
           sourceId_externalId_snapshotAt: {
             sourceId: githubSource.id,
