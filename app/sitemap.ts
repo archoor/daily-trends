@@ -8,42 +8,45 @@ import { getAllDataSources } from "@/lib/api/trends";
 import { getTrendListBySource } from "@/lib/api/trends";
 import { getAllSourceSlugs } from "@/config/sources";
 
-const baseUrl = getBaseUrl();
-
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const baseUrl = getBaseUrl();
   const entries: MetadataRoute.Sitemap = [
     { url: baseUrl, lastModified: new Date(), changeFrequency: "daily", priority: 1 },
   ];
 
-  const sources = await getAllDataSources();
-  const sourceSlugs = getAllSourceSlugs();
+  try {
+    const sources = await getAllDataSources();
+    const sourceSlugs = getAllSourceSlugs();
 
-  for (const slug of sourceSlugs) {
-    entries.push({
-      url: `${baseUrl}/trends/${slug}`,
-      lastModified: new Date(),
-      changeFrequency: "daily",
-      priority: 0.9,
-    });
-  }
-
-  for (const source of sources) {
-    try {
-      const list = await getTrendListBySource(source.id, { limit: 500 });
-      const slug = source.slug;
-      for (const item of list) {
-        const itemSlug = "slug" in item ? item.slug : "";
-        if (!itemSlug) continue;
-        entries.push({
-          url: `${baseUrl}/trends/${slug}/${itemSlug}`,
-          lastModified: "snapshotAt" in item ? new Date(item.snapshotAt) : new Date(),
-          changeFrequency: "weekly",
-          priority: 0.7,
-        });
-      }
-    } catch (e) {
-      console.warn("[sitemap] skip source", source.slug, e);
+    for (const slug of sourceSlugs) {
+      entries.push({
+        url: `${baseUrl}/trends/${slug}`,
+        lastModified: new Date(),
+        changeFrequency: "daily",
+        priority: 0.9,
+      });
     }
+
+    for (const source of sources) {
+      try {
+        const list = await getTrendListBySource(source.id, { limit: 500 });
+        const slug = source.slug;
+        for (const item of list) {
+          const itemSlug = "slug" in item ? item.slug : "";
+          if (!itemSlug) continue;
+          entries.push({
+            url: `${baseUrl}/trends/${slug}/${itemSlug}`,
+            lastModified: "snapshotAt" in item ? new Date(item.snapshotAt as any) : new Date(),
+            changeFrequency: "weekly",
+            priority: 0.7,
+          });
+        }
+      } catch (e) {
+        console.warn("[sitemap] skip source", source.slug, e);
+      }
+    }
+  } catch (e) {
+    console.warn("[sitemap] failed to build dynamic sitemap, falling back to home only", e);
   }
 
   return entries;
