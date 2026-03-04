@@ -7,27 +7,46 @@ from uuid import uuid4
 import psycopg
 
 
-def _load_dotenv_from_project_root() -> None:
-    """从项目根目录的 .env 加载变量（DATABASE_URL、FIRECRAWL_API_KEY 等），便于在 script/ 下直接运行。"""
+def _load_env_for_script() -> None:
+    """
+    加载采集脚本需要的环境变量：
+    - 优先从 script 目录下的 .env 读取（FIRECRAWL_API_KEY、SERPAPI_API_KEY 等机密）
+    - 再从项目根目录 .env 读取（如 DATABASE_URL），不会覆盖已存在的同名变量
+    """
     script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # 1) script/.env
+    script_env = os.path.join(script_dir, ".env")
+    if os.path.isfile(script_env):
+        with open(script_env, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip("'\"").strip()
+                if key and key not in os.environ:
+                    os.environ[key] = value
+
+    # 2) 项目根目录 .env（例如 DATABASE_URL），不覆盖前面已设置的变量
     project_root = os.path.dirname(script_dir)
-    env_path = os.path.join(project_root, ".env")
-    if not os.path.isfile(env_path):
-        return
-    with open(env_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip().strip("'\"").strip()
-            if key and key not in os.environ:
-                os.environ[key] = value
+    root_env = os.path.join(project_root, ".env")
+    if os.path.isfile(root_env):
+        with open(root_env, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip("'\"").strip()
+                if key and key not in os.environ:
+                    os.environ[key] = value
 
 
-# 先加载 .env，再导入依赖 Firecrawl 的模块，保证 FIRECRAWL_API_KEY 等可用
-_load_dotenv_from_project_root()
+# 先加载环境变量，再导入依赖 Firecrawl 的模块，保证 FIRECRAWL_API_KEY 等可用
+_load_env_for_script()
 
 from product_hunt_firecrawl import fetch_product_hunt_top_products_today  # noqa: E402
 
@@ -43,7 +62,7 @@ def _get_pg_conn_from_env() -> "psycopg.Connection":
     若未设置则尝试从项目根目录 .env 加载。
     例如：postgresql://user:pass@host:port/dbname
     """
-    _load_dotenv_from_project_root()
+    _load_env_for_script()
     url = os.getenv("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL 未配置，请在环境变量中设置。")
