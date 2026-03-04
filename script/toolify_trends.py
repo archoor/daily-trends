@@ -14,6 +14,9 @@ from uuid import uuid4
 import psycopg
 
 
+from gemini_summarizer import summarize_text_with_gemini
+
+
 def _load_env_for_script() -> None:
     """
     加载采集脚本需要的环境变量：
@@ -163,6 +166,36 @@ def _map_tools_to_rows(
     return rows
 
 
+def _build_toolify_page_context(tools: List[Dict]) -> str:
+    """
+    为整页趋势列表构造上下文文本，交给 Gemini 生成页面级总结。
+    这里不做复杂分析，只提供结构化信息，具体洞察由模型结合提示词完成。
+    """
+    lines: List[str] = []
+    total = len(tools)
+    lines.append(f"Source: Toolify AI trending tools page.")
+    lines.append(f"Total tools on page: {total}.")
+    lines.append(
+        "Each line below contains: rank, name, monthly visits display, growth display, growth rate, categories/tags, short description."
+    )
+
+    for item in tools[:100]:
+        name = item.get("name") or ""
+        rank = item.get("rank")
+        monthly_display = item.get("monthlyVisitsDisplay") or ""
+        growth_display = item.get("growthDisplay") or ""
+        growth_rate = item.get("growthRate")
+        summary = (item.get("summary") or "").replace("\n", " ")
+        tags = (item.get("tags") or "").replace("\n", " ")
+        line = (
+            f"#{rank or ''} {name} | visits: {monthly_display} | growth: {growth_display} "
+            f"| growth_rate: {growth_rate if growth_rate is not None else ''} | tags: {tags} | summary: {summary}"
+        )
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def ingest_toolify_trends() -> None:
     """
     主入口：
@@ -184,6 +217,14 @@ def ingest_toolify_trends() -> None:
             return
 
         rows = _map_tools_to_rows(source_id, tools)
+
+        # 为当前数据源生成整页级别的英文总结，写入 data_source.description
+        try:
+            page_context = _build_toolify_page_context(tools)
+            summary_text = summarize_text_with_gemini("toolify", page_context)
+        except Exception as e:
+            print(f"[toolify] 生成 Gemini 页面总结失败，将跳过本次总结：{e}")
+            summary_text = None
 
         with conn.cursor() as cur:
             # 全量覆盖：先删详情表（避免外键约束），再清空本源的列表表
@@ -207,6 +248,17 @@ def ingest_toolify_trends() -> None:
             """
 
             cur.executemany(insert_sql, rows)
+
+            if summary_text:
+                now_iso = _dt_to_iso(datetime.now(timezone.utc))
+                cur.execute(
+                    """
+                    UPDATE data_source
+                    SET description = %s, "updatedAt" = %s
+                    WHERE id = %s
+                    """,
+                    (summary_text, now_iso, source_id),
+                )
         conn.commit()
 
         print(

@@ -8,6 +8,8 @@ from uuid import uuid4
 
 import psycopg
 
+from gemini_summarizer import summarize_text_with_gemini
+
 
 def _load_env_for_script() -> None:
     """
@@ -199,6 +201,37 @@ def _map_trending_to_rows(
     return rows
 
 
+def _build_google_page_context(items: List[Dict[str, Any]], geo: str, hours: int) -> str:
+    """
+    为 Google Trends 整页构造上下文文本，供 Gemini 生成页面级总结。
+    """
+    lines: List[str] = []
+    total = len(items)
+    lines.append(f"Source: Google Trends - trending searches for geo={geo}, window={hours} hours.")
+    lines.append(f"Total trending topics on page: {total}.")
+    lines.append(
+        "Each line below contains: rank, query text, search volume, growth percentage, active/ended status, and related keywords."
+    )
+
+    for idx, item in enumerate(items[:100], start=1):
+        query = item.get("query") or ""
+        search_volume = item.get("search_volume")
+        increase = item.get("increase_percentage")
+        is_active = bool(item.get("active", False))
+        breakdown = item.get("trend_breakdown") or []
+        if isinstance(breakdown, list):
+            keywords = ", ".join(str(k) for k in breakdown[:5])
+        else:
+            keywords = ""
+        line = (
+            f"#{idx} {query} | search_volume: {search_volume} | growth_percent: {increase} "
+            f"| active: {is_active} | related_keywords: {keywords}"
+        )
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def ingest_google_trends(
     *,
     geo: str = "US",
@@ -221,7 +254,17 @@ def ingest_google_trends(
 
         snapshot_at = datetime.now(timezone.utc)
 
-        rows = _map_trending_to_rows(source_id, trending_items, snapshot_at)
+        rows = _map_trending_to_rows(
+            source_id, trending_items, snapshot_at
+        )
+
+        # 生成 Google Trends 整页英文总结，写入 data_source.description
+        try:
+            page_context = _build_google_page_context(trending_items, geo, hours)
+            summary_text = summarize_text_with_gemini("google", page_context)
+        except Exception as e:
+            print(f"[google_trends] 生成 Gemini 页面总结失败，将跳过本次总结：{e}")
+            summary_text = None
 
         with conn.cursor() as cur:
             cur.execute(
@@ -239,6 +282,16 @@ def ingest_google_trends(
             """
 
             cur.executemany(insert_sql, rows)
+            if summary_text:
+                now_iso = _dt_to_iso(datetime.now(timezone.utc))
+                cur.execute(
+                    """
+                    UPDATE data_source
+                    SET description = %s, "updatedAt" = %s
+                    WHERE id = %s
+                    """,
+                    (summary_text, now_iso, source_id),
+                )
         conn.commit()
 
         print(

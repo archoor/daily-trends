@@ -51,6 +51,16 @@ export default async function TrendListPage({ params }: PageProps) {
   const isProductHunt = sourceId === "producthunt";
   const isGoogle = sourceId === "google";
 
+  const rawSummary =
+    (source && "description" in source && source.description) || config.description;
+  const summaryParagraphs =
+    typeof rawSummary === "string"
+      ? rawSummary
+          .split(/\n{2,}|\r?\n\r?\n/)
+          .map((p) => p.trim())
+          .filter(Boolean)
+      : [];
+
   const listUrl = absoluteUrl(`/trends/${sourceId}`);
   const itemListJsonLd = buildItemListJsonLd({
     name: `Top ${config.name} Rankings`,
@@ -75,9 +85,18 @@ export default async function TrendListPage({ params }: PageProps) {
         <h1 id="list-title" className="title">
           Top {config.name} Rankings
         </h1>
-        <p className="description">
-          {config.description ?? "Trend list. Data is written by external crawlers; this page only displays it."}
-        </p>
+        {summaryParagraphs.length > 0 ? (
+          summaryParagraphs.map((p, idx) => (
+            <p key={idx} className="description">
+              {p}
+            </p>
+          ))
+        ) : (
+          <p className="description">
+            {config.description ??
+              "Trend list. Data is written by external crawlers; this page only displays it."}
+          </p>
+        )}
       </section>
 
       {list.length === 0 ? (

@@ -7,6 +7,9 @@ from uuid import uuid4
 import psycopg
 
 
+from gemini_summarizer import summarize_text_with_gemini
+
+
 def _load_env_for_script() -> None:
     """
     加载采集脚本需要的环境变量：
@@ -179,6 +182,34 @@ def _map_products_to_rows(
     return rows
 
 
+def _build_product_hunt_page_context(products: List[Dict]) -> str:
+    """
+    为 Product Hunt 今日榜单构造整页上下文文本，供 Gemini 生成页面总结。
+    """
+    lines: List[str] = []
+    total = len(products)
+    lines.append("Source: Product Hunt - today's top products.")
+    lines.append(f"Total products on page: {total}.")
+    lines.append(
+        "Each line below contains: rank, name, short description, categories, upvotes and comment count."
+    )
+
+    for item in products[:100]:
+        rank = item.get("rank")
+        name = item.get("name") or ""
+        description = (item.get("description") or "").replace("\n", " ")
+        categories = (item.get("categories") or "").replace("\n", " ")
+        comments = item.get("commentCount")
+        upvotes = item.get("upvoteCount")
+        line = (
+            f"#{rank or ''} {name} | desc: {description} | categories: {categories} "
+            f"| upvotes: {upvotes} | comments: {comments}"
+        )
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def ingest_product_hunt_today() -> None:
     """
     主入口：
@@ -201,6 +232,14 @@ def ingest_product_hunt_today() -> None:
 
         rows = _map_products_to_rows(source_id, products)
 
+        # 生成 Product Hunt 今日榜单的整页英文总结，写入 data_source.description
+        try:
+            page_context = _build_product_hunt_page_context(products)
+            summary_text = summarize_text_with_gemini("producthunt", page_context)
+        except Exception as e:
+            print(f"[product_hunt] 生成 Gemini 页面总结失败，将跳过本次总结：{e}")
+            summary_text = None
+
         with conn.cursor() as cur:
             # 全量覆盖：先删详情表（避免外键约束），再清空列表表
             cur.execute(
@@ -217,6 +256,17 @@ def ingest_product_hunt_today() -> None:
             """
 
             cur.executemany(insert_sql, rows)
+
+            if summary_text:
+                now_iso = _dt_to_iso(datetime.now(timezone.utc))
+                cur.execute(
+                    """
+                    UPDATE data_source
+                    SET description = %s, "updatedAt" = %s
+                    WHERE id = %s
+                    """,
+                    (summary_text, now_iso, source_id),
+                )
         conn.commit()
 
         print(

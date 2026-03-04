@@ -20,6 +20,9 @@
 - 使用项目根目录的 `.env` 中的 `DATABASE_URL`，或在本目录下单独配置与主项目相同的数据库连接。
 - 建议使用 Python 3.9+，依赖见 `pyproject.toml`（beautifulsoup4、requests）。
 - **Firecrawl 采集**（Toolify、Product Hunt）：需设置环境变量 `FIRECRAWL_API_KEY`。
+- **页面总结（Gemini）**：若希望在采集结束后自动生成详情页中文总结，需要在 `.env` 中配置：
+  - `GEMINI_API_KEY`：Google Gemini 的 API Key；
+  - （可选）`GEMINI_MODEL`：模型名称，默认 `gemini-1.5-flash`。
 
 ## 脚本一览
 
@@ -29,3 +32,6 @@
 | `toolify_trends.py` | 采集 Toolify AI 趋势并写入 `toolify_trend_item` 表（数据源 slug: `toolify`） | 在项目根目录执行：`python script/toolify_trends.py`，需 `DATABASE_URL`、`FIRECRAWL_API_KEY` |
 | `product_hunt_firecrawl.py` | 使用 Firecrawl 抓取 Product Hunt 首页今日产品列表 | 被 `product_hunt_trends.py` 调用 |
 | `product_hunt_trends.py` | 采集 Product Hunt 今日产品并写入 `product_hunt_trend_item` 表 | 在项目根目录执行：`python script/product_hunt_trends.py`，需 `DATABASE_URL`、`FIRECRAWL_API_KEY` |
+
+> 提示：若配置了 `GEMINI_API_KEY`，上述四个入库脚本在完成列表写入后，会自动按数据源读取各自的总结提示词（见 `script/prompts/*.txt`），
+> 调用 Gemini 生成每条记录的中文摘要，并写入对应的 `*_trend_detail.description` 字段，供前端详情页直接使用。

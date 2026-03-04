@@ -10,6 +10,8 @@ import psycopg
 import requests
 from bs4 import BeautifulSoup
 
+from gemini_summarizer import summarize_text_with_gemini
+
 
 def _dt_to_iso(dt: datetime) -> str:
     dt = dt.astimezone(timezone.utc).replace(microsecond=0)
@@ -256,6 +258,35 @@ def _map_trending_to_rows(
     return rows
 
 
+def _build_github_page_context(items: List[Dict[str, Any]], date_range: str) -> str:
+    """
+    为 GitHub Trending 整页构造上下文文本，供 Gemini 做页面级总结。
+    """
+    lines: List[str] = []
+    total = len(items)
+    lines.append(f"Source: GitHub Trending repositories, date range: {date_range}.")
+    lines.append(f"Total repositories on page: {total}.")
+    lines.append(
+        "Each line below contains: rank, repo full name, primary language, stars, forks, stars in this period, and short description."
+    )
+
+    for item in items[:100]:
+        rank = item.get("rank")
+        name = item.get("repo_full_name") or ""
+        language = item.get("language") or ""
+        stars = int(item.get("stars") or 0)
+        forks = int(item.get("forks") or 0)
+        stars_today = int(item.get("stars_today") or 0)
+        desc = (item.get("description") or "").replace("\n", " ")
+        line = (
+            f"#{rank or ''} {name} | language: {language} | stars: {stars} | forks: {forks} "
+            f"| stars_in_period: {stars_today} | description: {desc}"
+        )
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def ingest_github_trends(
     *, date_range: str = "today", language: Optional[str] = None
 ) -> None:
@@ -271,6 +302,14 @@ def ingest_github_trends(
         trending_items = _fetch_github_trending(date_range=date_range, language=language)
         snapshot_at = datetime.now(timezone.utc)
         rows = _map_trending_to_rows(source_id, trending_items, snapshot_at)
+
+        # 生成本次 GitHub Trending 页的整体英文总结，写入 data_source.description
+        try:
+            page_context = _build_github_page_context(trending_items, date_range)
+            summary_text = summarize_text_with_gemini("github", page_context)
+        except Exception as e:
+            print(f"[github_trends] 生成 Gemini 页面总结失败，将跳过本次总结：{e}")
+            summary_text = None
 
         with conn.cursor() as cur:
             # 仅删除当前 date_range 的旧数据，支持同时保留 today/weekly/monthly 不同快照
@@ -288,6 +327,17 @@ def ingest_github_trends(
             """
 
             cur.executemany(insert_sql, rows)
+
+            if summary_text:
+                now_iso = _dt_to_iso(datetime.now(timezone.utc))
+                cur.execute(
+                    """
+                    UPDATE data_source
+                    SET description = %s, "updatedAt" = %s
+                    WHERE id = %s
+                    """,
+                    (summary_text, now_iso, source_id),
+                )
         conn.commit()
 
         print(
