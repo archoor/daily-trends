@@ -170,11 +170,6 @@ export default async function TrendListPage({ params }: PageProps) {
                       </td>
                       <td className="col-name">
                         <Link href={`/trends/${sourceId}/${item.slug}`}>{item.name}</Link>
-                        {item.url && (
-                          <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: "0.25rem", fontSize: "0.8125rem" }}>
-                            Link
-                          </a>
-                        )}
                       </td>
                       <td className="col-desc">{item.description ?? "—"}</td>
                       <td className="col-tags">{item.categories ?? "—"}</td>
@@ -210,11 +205,6 @@ export default async function TrendListPage({ params }: PageProps) {
                         </td>
                         <td className="col-name">
                           <Link href={`/trends/${sourceId}/${item.slug}`}>{item.repoFullName}</Link>
-                          {item.url && (
-                            <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: "0.25rem", fontSize: "0.8125rem" }}>
-                              Link
-                            </a>
-                          )}
                         </td>
                         <td className="col-desc">{item.description ?? "—"}</td>
                         <td>{item.language ?? "—"}</td>
@@ -252,11 +242,6 @@ export default async function TrendListPage({ params }: PageProps) {
                         </td>
                         <td className="col-name">
                           <Link href={`/trends/${sourceId}/${item.slug}`}>{item.name}</Link>
-                          {item.url && (
-                            <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: "0.25rem", fontSize: "0.8125rem" }}>
-                              Link
-                            </a>
-                          )}
                         </td>
                         <td>{item.monthlyVisits != null ? item.monthlyVisits.toLocaleString() : "—"}</td>
                         <td>

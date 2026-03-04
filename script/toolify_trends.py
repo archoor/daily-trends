@@ -2,18 +2,40 @@
 采集 Toolify AI 趋势榜单并写入数据库。
 使用 toolify_firecrawl 抓取 https://www.toolify.ai/zh/Best-trending-AI-Tools，
 解析后写入 toolify_trend_item 表；数据源 slug 为 'toolify'，与 config/sources.ts 一致。
+
+（已升级为写入 Postgres，使用 DATABASE_URL=postgresql://...）
 """
 import os
 import re
-import sqlite3
 from datetime import datetime, timezone
 from typing import List, Dict, Tuple
 from uuid import uuid4
 
-from toolify_firecrawl import fetch_toolify_ai_trending_tools
+import psycopg
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
+def _load_dotenv_from_project_root() -> None:
+    """从项目根目录的 .env 加载变量（DATABASE_URL、FIRECRAWL_API_KEY 等），便于在 script/ 下直接运行。"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    env_path = os.path.join(project_root, ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"").strip()
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_dotenv_from_project_root()
+
+from toolify_firecrawl import fetch_toolify_ai_trending_tools  # noqa: E402
 
 
 def _dt_to_iso(dt: datetime) -> str:
@@ -21,53 +43,52 @@ def _dt_to_iso(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
-def _resolve_sqlite_path_from_env() -> str:
+def _get_pg_conn_from_env() -> "psycopg.Connection":
+    """
+    从环境变量 DATABASE_URL 获取 Postgres 连接。
+    若未设置则尝试从项目根目录 .env 加载。
+    例如：postgresql://user:pass@host:port/dbname
+    """
+    _load_dotenv_from_project_root()
     url = os.getenv("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL 未配置，请在环境变量中设置。")
-
-    if not url.startswith("file:"):
-        raise RuntimeError("当前脚本仅支持 SQLite（DATABASE_URL 形如 file:./dev.db）。")
-
-    path = url[len("file:") :]
-
-    if path.startswith("./"):
-        return os.path.join(PROJECT_ROOT, path[2:])
-
-    return path
+    if not url.startswith("postgres"):
+        raise RuntimeError("当前脚本已切换为 Postgres，仅支持 postgresql:// 开头的连接串。")
+    return psycopg.connect(url)
 
 
-def _get_or_create_toolify_source_id(conn: sqlite3.Connection) -> str:
+def _get_or_create_toolify_source_id(conn: "psycopg.Connection") -> str:
     """
     在 data_source 表中查找/创建 Toolify 的数据源记录。
     slug 约定为 'toolify'，与前端 config/sources.ts 一致。
     """
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM data_source WHERE slug = ?", ("toolify",))
-    row = cur.fetchone()
-    if row:
-        return row[0]
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM data_source WHERE slug = %s", ("toolify",))
+        row = cur.fetchone()
+        if row:
+            return row[0]
 
-    source_id = uuid4().hex
-    now_iso = _dt_to_iso(datetime.now(timezone.utc))
+        source_id = uuid4().hex
+        now_iso = _dt_to_iso(datetime.now(timezone.utc))
 
-    cur.execute(
-        """
-        INSERT INTO data_source (id, slug, name, baseUrl, isActive, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            source_id,
-            "toolify",
-            "Toolify AI Tools",
-            "https://www.toolify.ai",
-            1,
-            now_iso,
-            now_iso,
-        ),
-    )
-    conn.commit()
-    return source_id
+        cur.execute(
+            """
+            INSERT INTO data_source (id, slug, name, "baseUrl", "isActive", "createdAt", "updatedAt")
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                source_id,
+                "toolify",
+                "Toolify AI Tools",
+                "https://www.toolify.ai",
+                True,
+                now_iso,
+                now_iso,
+            ),
+        )
+        conn.commit()
+        return source_id
 
 
 def _map_tools_to_rows(
@@ -128,17 +149,14 @@ def ingest_toolify_trends() -> None:
     主入口：
     1) 调用 toolify_firecrawl 抓取 Toolify AI 趋势页；
     2) 解析为结构化列表；
-    3) 写入 SQLite 的 toolify_trend_item 表。
+    3) 写入 Postgres 的 toolify_trend_item 表。
 
     策略：每次采集前清空本数据源的 toolify_trend_detail 与 toolify_trend_item，
     再插入本次抓取结果（全量覆盖）。
     """
-    database_path = _resolve_sqlite_path_from_env()
-    conn = sqlite3.connect(database_path)
+    conn = _get_pg_conn_from_env()
 
     try:
-        conn.execute("PRAGMA foreign_keys = ON;")
-
         source_id = _get_or_create_toolify_source_id(conn)
 
         tools = fetch_toolify_ai_trending_tools()
@@ -148,43 +166,32 @@ def ingest_toolify_trends() -> None:
 
         rows = _map_tools_to_rows(source_id, tools)
 
-        cur = conn.cursor()
+        with conn.cursor() as cur:
+            # 全量覆盖：先删详情表（避免外键约束），再清空本源的列表表
+            cur.execute(
+                """
+                DELETE FROM toolify_trend_detail
+                WHERE "trendId" IN (SELECT id FROM toolify_trend_item WHERE "sourceId" = %s)
+                """,
+                (source_id,),
+            )
+            cur.execute(
+                'DELETE FROM toolify_trend_item WHERE "sourceId" = %s', (source_id,)
+            )
 
-        # 全量覆盖：先删详情表（避免外键约束），再清空本源的列表表
-        cur.execute(
+            insert_sql = """
+            INSERT INTO toolify_trend_item (
+                id, "sourceId", "externalId", slug, rank, name, url,
+                "monthlyVisits", "growthDisplay", "growthRate", summary, tags,
+                "snapshotAt", "createdAt", "updatedAt"
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
-            DELETE FROM toolify_trend_detail
-            WHERE trendId IN (SELECT id FROM toolify_trend_item WHERE sourceId = ?)
-            """,
-            (source_id,),
-        )
-        cur.execute("DELETE FROM toolify_trend_item WHERE sourceId = ?", (source_id,))
 
-        insert_sql = """
-        INSERT INTO toolify_trend_item (
-            id,
-            sourceId,
-            externalId,
-            slug,
-            rank,
-            name,
-            url,
-            monthlyVisits,
-            growthDisplay,
-            growthRate,
-            summary,
-            tags,
-            snapshotAt,
-            createdAt,
-            updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-
-        cur.executemany(insert_sql, rows)
+            cur.executemany(insert_sql, rows)
         conn.commit()
 
         print(
-            f"[toolify] count={len(rows)} saved to {database_path} (sourceId={source_id})"
+            f"[toolify] count={len(rows)} saved to Postgres (sourceId={source_id})"
         )
     finally:
         conn.close()

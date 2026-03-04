@@ -1,14 +1,35 @@
 import os
 import re
-import sqlite3
 from datetime import datetime, timezone
 from typing import List, Dict, Tuple
 from uuid import uuid4
 
-from product_hunt_firecrawl import fetch_product_hunt_top_products_today
+import psycopg
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
+def _load_dotenv_from_project_root() -> None:
+    """从项目根目录的 .env 加载变量（DATABASE_URL、FIRECRAWL_API_KEY 等），便于在 script/ 下直接运行。"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    env_path = os.path.join(project_root, ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"").strip()
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+# 先加载 .env，再导入依赖 Firecrawl 的模块，保证 FIRECRAWL_API_KEY 等可用
+_load_dotenv_from_project_root()
+
+from product_hunt_firecrawl import fetch_product_hunt_top_products_today  # noqa: E402
 
 
 def _dt_to_iso(dt: datetime) -> str:
@@ -16,54 +37,53 @@ def _dt_to_iso(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
-def _resolve_sqlite_path_from_env() -> str:
+def _get_pg_conn_from_env() -> "psycopg.Connection":
+    """
+    从环境变量 DATABASE_URL 获取 Postgres 连接。
+    若未设置则尝试从项目根目录 .env 加载。
+    例如：postgresql://user:pass@host:port/dbname
+    """
+    _load_dotenv_from_project_root()
     url = os.getenv("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL 未配置，请在环境变量中设置。")
-
-    if not url.startswith("file:"):
-        raise RuntimeError("当前脚本仅支持 SQLite（DATABASE_URL 形如 file:./dev.db）。")
-
-    path = url[len("file:") :]
-
-    if path.startswith("./"):
-        return os.path.join(PROJECT_ROOT, path[2:])
-
-    return path
+    if not url.startswith("postgres"):
+        raise RuntimeError("当前脚本已切换为 Postgres，仅支持 postgresql:// 开头的连接串。")
+    return psycopg.connect(url)
 
 
-def _get_or_create_product_hunt_source_id(conn: sqlite3.Connection) -> str:
+def _get_or_create_product_hunt_source_id(conn: "psycopg.Connection") -> str:
     """
     在 data_source 表中查找/创建 Product Hunt 的数据源记录。
     slug 约定为 'producthunt'，与前端 config/sources.ts 一致。
     """
-    cur = conn.cursor()
-    # slug 需与前端 config/sources.ts 一致，为 "producthunt"（无连字符）
-    cur.execute("SELECT id FROM data_source WHERE slug = ?", ("producthunt",))
-    row = cur.fetchone()
-    if row:
-        return row[0]
+    with conn.cursor() as cur:
+        # slug 需与前端 config/sources.ts 一致，为 "producthunt"（无连字符）
+        cur.execute('SELECT id FROM data_source WHERE slug = %s', ("producthunt",))
+        row = cur.fetchone()
+        if row:
+            return row[0]
 
-    source_id = uuid4().hex
-    now_iso = _dt_to_iso(datetime.now(timezone.utc))
+        source_id = uuid4().hex
+        now_iso = _dt_to_iso(datetime.now(timezone.utc))
 
-    cur.execute(
-        """
-        INSERT INTO data_source (id, slug, name, baseUrl, isActive, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            source_id,
-            "producthunt",
-            "Product Hunt",
-            "https://www.producthunt.com",
-            1,
-            now_iso,
-            now_iso,
-        ),
-    )
-    conn.commit()
-    return source_id
+        cur.execute(
+            """
+            INSERT INTO data_source (id, slug, name, "baseUrl", "isActive", "createdAt", "updatedAt")
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                source_id,
+                "producthunt",
+                "Product Hunt",
+                "https://www.producthunt.com",
+                True,
+                now_iso,
+                now_iso,
+            ),
+        )
+        conn.commit()
+        return source_id
 
 
 def _map_products_to_rows(
@@ -77,6 +97,7 @@ def _map_products_to_rows(
     now_iso = snapshot_iso
 
     rows: List[Tuple] = []
+    seen: set[Tuple[str, str]] = set()
 
     for item in products:
         name = item.get("name")
@@ -111,6 +132,12 @@ def _map_products_to_rows(
         except (TypeError, ValueError):
             upvote_count_int = 0
 
+        key = (external_id, snapshot_iso)
+        if key in seen:
+            # 同一 externalId + snapshotAt 已存在，跳过重复，避免唯一索引冲突
+            continue
+        seen.add(key)
+
         row: Tuple = (
             uuid4().hex,  # id
             source_id,
@@ -143,12 +170,9 @@ def ingest_product_hunt_today() -> None:
     当前策略：每次采集前清空 product_hunt_trend_detail 与 product_hunt_trend_item 表，
     再插入本次抓取结果（全量覆盖，不区分 sourceId）。
     """
-    database_path = _resolve_sqlite_path_from_env()
-    conn = sqlite3.connect(database_path)
+    conn = _get_pg_conn_from_env()
 
     try:
-        conn.execute("PRAGMA foreign_keys = ON;")
-
         source_id = _get_or_create_product_hunt_source_id(conn)
 
         products = fetch_product_hunt_top_products_today()
@@ -158,39 +182,26 @@ def ingest_product_hunt_today() -> None:
 
         rows = _map_products_to_rows(source_id, products)
 
-        cur = conn.cursor()
+        with conn.cursor() as cur:
+            # 全量覆盖：先删详情表（避免外键约束），再清空列表表
+            cur.execute(
+                'DELETE FROM product_hunt_trend_detail WHERE "trendId" IN (SELECT id FROM product_hunt_trend_item)'
+            )
+            cur.execute("DELETE FROM product_hunt_trend_item")
 
-        # 全量覆盖：先删详情表（避免外键约束），再清空列表表
-        cur.execute(
-            "DELETE FROM product_hunt_trend_detail WHERE trendId IN (SELECT id FROM product_hunt_trend_item)"
-        )
-        cur.execute("DELETE FROM product_hunt_trend_item")
+            insert_sql = """
+            INSERT INTO product_hunt_trend_item (
+                id, "sourceId", "externalId", slug, rank, name, description,
+                "iconUrl", categories, "commentCount", "upvoteCount", url,
+                "snapshotAt", "createdAt", "updatedAt"
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
 
-        insert_sql = """
-        INSERT INTO product_hunt_trend_item (
-            id,
-            sourceId,
-            externalId,
-            slug,
-            rank,
-            name,
-            description,
-            iconUrl,
-            categories,
-            commentCount,
-            upvoteCount,
-            url,
-            snapshotAt,
-            createdAt,
-            updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-
-        cur.executemany(insert_sql, rows)
+            cur.executemany(insert_sql, rows)
         conn.commit()
 
         print(
-            f"[product_hunt] count={len(rows)} saved to {database_path} (sourceId={source_id})"
+            f"[product_hunt] count={len(rows)} saved to Postgres (sourceId={source_id})"
         )
     finally:
         conn.close()

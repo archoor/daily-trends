@@ -1,19 +1,17 @@
 import json
 import os
 import re
-import sqlite3
 import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+import psycopg
+
 from google_serpapi_client import (
     SerpApiError,
     fetch_google_trends_trending_now,
 )
-
-
-PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 
 
 def _dt_to_iso(dt: datetime) -> str:
@@ -29,49 +27,64 @@ def _slugify(value: str) -> str:
     return value_ascii or "trend"
 
 
-def _resolve_sqlite_path_from_env() -> str:
+def _load_dotenv_from_project_root() -> None:
+    """若 DATABASE_URL 未设置，从项目根目录的 .env 加载（便于在 script/ 下直接运行）。"""
+    if os.getenv("DATABASE_URL"):
+        return
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    env_path = os.path.join(project_root, ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"").strip()
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def _get_pg_conn_from_env() -> "psycopg.Connection":
+    _load_dotenv_from_project_root()
     url = os.getenv("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL 未配置，请在环境变量中设置。")
-
-    if not url.startswith("file:"):
-        raise RuntimeError("当前脚本仅支持 SQLite（DATABASE_URL 形如 file:./dev.db）。")
-
-    path = url[len("file:") :]
-
-    if path.startswith("./"):
-        return os.path.join(PROJECT_ROOT, path[2:])
-
-    return path
+    if not url.startswith("postgres"):
+        raise RuntimeError("当前脚本已切换为 Postgres，仅支持 postgresql:// 开头的连接串。")
+    return psycopg.connect(url)
 
 
-def _get_or_create_google_source_id(conn: sqlite3.Connection) -> str:
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM data_source WHERE slug = ?", ("google",))
-    row = cur.fetchone()
-    if row:
-        return row[0]
+def _get_or_create_google_source_id(conn: "psycopg.Connection") -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM data_source WHERE slug = %s", ("google",))
+        row = cur.fetchone()
+        if row:
+            return row[0]
 
-    source_id = uuid4().hex
-    now_iso = _dt_to_iso(datetime.now(timezone.utc))
+        source_id = uuid4().hex
+        now_iso = _dt_to_iso(datetime.now(timezone.utc))
 
-    cur.execute(
-        """
-        INSERT INTO data_source (id, slug, name, baseUrl, isActive, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            source_id,
-            "google",
-            "Google Trends",
-            "https://trends.google.com",
-            1,
-            now_iso,
-            now_iso,
-        ),
-    )
-    conn.commit()
-    return source_id
+        cur.execute(
+            """
+            INSERT INTO data_source (id, slug, name, "baseUrl", "isActive", "createdAt", "updatedAt")
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                source_id,
+                "google",
+                "Google Trends",
+                "https://trends.google.com",
+                True,
+                now_iso,
+                now_iso,
+            ),
+        )
+        conn.commit()
+        return source_id
 
 
 def _map_trending_to_rows(
@@ -133,7 +146,7 @@ def _map_trending_to_rows(
             float(growth_rate) if isinstance(growth_rate, (int, float)) else None,
             started_at_iso,
             ended_at_iso,
-            1 if is_active else 0,
+            is_active,
             related_keywords,
             more_related_count,
             snapshot_iso,
@@ -153,12 +166,8 @@ def ingest_google_trends(
     only_active: Optional[bool] = None,
     hl: str = "en",
 ) -> None:
-    database_path = _resolve_sqlite_path_from_env()
-
-    conn = sqlite3.connect(database_path)
+    conn = _get_pg_conn_from_env()
     try:
-        conn.execute("PRAGMA foreign_keys = ON;")
-
         source_id = _get_or_create_google_source_id(conn)
 
         trending_items = fetch_google_trends_trending_now(
@@ -173,40 +182,26 @@ def ingest_google_trends(
 
         rows = _map_trending_to_rows(source_id, trending_items, snapshot_at)
 
-        cur = conn.cursor()
+        with conn.cursor() as cur:
+            cur.execute(
+                'DELETE FROM google_trend_item WHERE "sourceId" = %s',
+                (source_id,),
+            )
 
-        cur.execute(
-            "DELETE FROM google_trend_item WHERE sourceId = ?",
-            (source_id,),
-        )
+            insert_sql = """
+            INSERT INTO google_trend_item (
+                id, "sourceId", "externalId", slug, rank, name,
+                "searchVolume", "searchVolumeDisplay", "growthRate",
+                "startedAt", "endedAt", "isActive", "relatedKeywords", "moreRelatedCount",
+                "snapshotAt", "createdAt", "updatedAt"
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
 
-        insert_sql = """
-        INSERT INTO google_trend_item (
-            id,
-            sourceId,
-            externalId,
-            slug,
-            rank,
-            name,
-            searchVolume,
-            searchVolumeDisplay,
-            growthRate,
-            startedAt,
-            endedAt,
-            isActive,
-            relatedKeywords,
-            moreRelatedCount,
-            snapshotAt,
-            createdAt,
-            updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-
-        cur.executemany(insert_sql, rows)
+            cur.executemany(insert_sql, rows)
         conn.commit()
 
         print(
-            f"[google_trends] geo={geo} hours={hours} count={len(rows)} saved to {database_path}"
+            f"[google_trends] geo={geo} hours={hours} count={len(rows)} saved to Postgres"
         )
     finally:
         conn.close()
