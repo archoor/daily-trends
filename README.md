@@ -5,7 +5,7 @@
 ## 功能概览
 
 - **多数据源**：每个趋势站对应独立列表页与详情页，通过顶部菜单切换。
-- **数据来源**：数据库（SQLite/PostgreSQL）。由你在其他项目（如 Python 爬虫）中按本项目的 Prisma schema 写入 `DataSource` 及各数据源对应的趋势表（如 Toolify 源：`toolify_trend_item`、`toolify_trend_detail`；Google 趋势源：`google_trend_item`、`google_trend_detail`）。
+- **数据来源**：数据库（PostgreSQL，推荐 Vercel Postgres）。由你在其他项目（如 Python 爬虫）中按本项目的 Prisma schema 写入 `DataSource` 及各数据源对应的趋势表（如 Toolify 源：`toolify_trend_item`、`toolify_trend_detail`；Google 趋势源：`google_trend_item`、`google_trend_detail`）。
 - **展示内容**：Toolify 列表表头为 排行 | 工具 | 月访问量 | 增长 | 增长率 | 介绍 | 标签；GitHub 列表表头为 排行 | 仓库 | 描述 | 语言 | 星标 | Fork | 今日新增星标；Product Hunt 列表表头为 排行 | 图标 | 产品名 | 描述 | 类别 | 评论数 | 点赞数；**Google 趋势**列表表头为 排行 | 趋势名称 | 搜索量 | 已开始 | 结束时间 | 趋势细分；详情页按数据源展示完整信息与描述。
 - **扩展性**：新增数据源需在 `config/sources.ts` 增加配置，在 Prisma 中增加该源的趋势表（如 `XxxTrendItem`/`XxxTrendDetail` 并 `@@map("xxx_trend_item")`），并确保爬虫写入对应 `DataSource` 及该源表数据。
 
@@ -43,7 +43,7 @@
 2. **配置环境**
    ```bash
    cp .env.example .env
-   # 编辑 .env 中的 DATABASE_URL（与爬虫使用同一数据库）
+   # 编辑 .env 中的 DATABASE_URL 为 PostgreSQL 连接串（与爬虫使用同一数据库；Vercel 部署时用 Vercel Postgres 提供的连接串）
    ```
 
 3. **初始化数据库**
@@ -100,9 +100,20 @@
 
 | 变量 | 说明 |
 |------|------|
-| `DATABASE_URL` | Prisma 数据库连接（需与爬虫使用同一库，示例：`file:./dev.db`） |
+| `DATABASE_URL` | Prisma 用 PostgreSQL 连接串（需与爬虫使用同一库）。Vercel 上绑定 Vercel Postgres 后，在 Environment Variables 中把 Storage 提供的 `POSTGRES_PRISMA_URL` 填到 `DATABASE_URL`（或直接复制其值） |
 | `FIRECRAWL_API_KEY` | Firecrawl API 密钥；采集 Toolify AI、Product Hunt 等脚本需要 |
 | `NEXT_PUBLIC_SITE_URL` | 站点根 URL（可选），用于 SEO 的 canonical、Open Graph、sitemap；未设置时生产环境会使用 Vercel 的 `VERCEL_URL` |
+| `SOURCE_DB_PATH` | （仅迁移脚本）SQLite 数据库文件路径，默认 `prisma/dev.db` |
+
+## 从 SQLite (dev.db) 迁移到 Postgres
+
+若之前本地使用过 `dev.db`，需要把数据迁到当前 Postgres（如 Vercel Postgres）：
+
+1. 确保 `.env` 中 `DATABASE_URL` 已指向目标 Postgres。
+2. 将原来的 SQLite 文件放到 `prisma/dev.db`（或设置环境变量 `SOURCE_DB_PATH` 指向该文件）。
+3. 执行：`npm run db:migrate-from-sqlite`。
+
+默认行为：迁移全部表后，会删除 slug 为 `toolify`、`github`、`producthunt` 的 DataSource 及其下所有趋势条目与详情（与种子脚本一致，视为测试数据）。**若希望迁移后各表条数与 dev.db 完全一致、不删除任何记录**，请先设置环境变量再执行：`MIGRATE_SKIP_DELETE_TEST_DATA=1 npm run db:migrate-from-sqlite`。
 
 ## 脚本说明
 
@@ -114,6 +125,7 @@
 | `npm run db:push` | 推送 schema 到数据库（开发） |
 | `npm run db:seed` | 执行种子脚本，插入测试趋势数据（DataSource + TrendItem + TrendDetail） |
 | `npm run db:studio` | 打开 Prisma Studio 查看数据 |
+| `npm run db:migrate-from-sqlite` | 将 `prisma/dev.db`（或 `SOURCE_DB_PATH`）迁移到当前 Postgres；默认会删除测试数据源（toolify/github/producthunt）。需保留全部数据时执行：`MIGRATE_SKIP_DELETE_TEST_DATA=1 npm run db:migrate-from-sqlite` |
 
 ## 界面与样式
 
@@ -140,47 +152,22 @@
 
 要把本站部署到公网，需要做三件事：**托管数据库**、**部署 Next.js 应用**、**配置环境变量**。推荐组合：**Vercel（应用）+ 托管 PostgreSQL（数据库）**。
 
-### 1. 生产环境使用 PostgreSQL（必做）
+### 1. 使用 Vercel Postgres（推荐）
 
-当前本地使用 SQLite（`file:./dev.db`），Vercel 等无状态平台没有持久化磁盘，**生产环境必须使用托管数据库**。本项目的 Prisma 模型与 SQLite/PostgreSQL 兼容，只需改连接方式。
+本项目已配置为使用 **PostgreSQL**（`prisma/schema.prisma` 中 `provider = "postgresql"`），推荐直接使用 [Vercel Postgres](https://vercel.com/storage/postgres) 与 Vercel 部署集成。
 
-1. **选一个托管 PostgreSQL 服务**（任选其一即可）  
-   - [Vercel Postgres](https://vercel.com/storage/postgres)（与 Vercel 集成最好）  
-   - [Supabase](https://supabase.com)（免费额度大）  
-   - [Neon](https://neon.tech)（按量、免费层可用）  
-   - [Railway](https://railway.app)（可同时部署应用+数据库）
+1. **在 Vercel 项目中创建 Postgres 存储**  
+   - 打开 Vercel 项目 → Storage → Create Database → 选择 **Postgres**。  
+   - 创建完成后，Vercel 会自动注入环境变量（如 `POSTGRES_PRISMA_URL`、`POSTGRES_URL` 等）。
 
-2. **创建数据库并拿到连接串**  
-   在对应控制台创建项目/数据库，复制 **PostgreSQL 连接 URL**，格式类似：  
-   `postgresql://用户:密码@主机:5432/数据库名?sslmode=require`
+2. **配置 `DATABASE_URL`**  
+   - 在 Vercel 项目 → Settings → Environment Variables 中新增：  
+     - **Name**: `DATABASE_URL`  
+     - **Value**: 复制 Storage 页中 **Prisma** 对应的连接串（即 `POSTGRES_PRISMA_URL` 的值）。  
+   - 本地开发：在 `.env` 中同样设置 `DATABASE_URL` 为同一连接串（或本地/其他 Postgres 地址），便于本地跑应用和迁移。
 
-3. **修改 Prisma 使用 PostgreSQL**  
-   在 `prisma/schema.prisma` 中，把：
-
-   ```prisma
-   datasource db {
-     provider = "sqlite"
-     url      = env("DATABASE_URL")
-   }
-   ```
-
-   改为：
-
-   ```prisma
-   datasource db {
-     provider = "postgresql"
-     url      = env("DATABASE_URL")
-   }
-   ```
-
-4. **本地开发保留 SQLite（可选）**  
-   若希望本地继续用 SQLite、仅生产用 PostgreSQL，可以：  
-   - 本地 `.env` 保持 `DATABASE_URL="file:./dev.db"`，且 schema 里 `provider = "sqlite"`；  
-   - 部署前改为 `provider = "postgresql"` 并在 Vercel 等平台配置生产用 `DATABASE_URL`；  
-   或使用多环境 schema（如 `schema.pg.prisma`）在 CI/部署时切换。
-
-5. **在生产库执行迁移**  
-   在**本地**把 `DATABASE_URL` 指向生产 PostgreSQL（可新建 `.env.production` 仅用于跑迁移），执行：
+3. **在生产库执行迁移**  
+   在**本地**将 `.env` 的 `DATABASE_URL` 指向 Vercel Postgres（或生产用 Postgres），执行：
 
    ```bash
    npx prisma generate
@@ -188,6 +175,9 @@
    ```
 
    若已有数据需迁移，可用 `prisma migrate` 做正式迁移。
+
+4. **其他托管 PostgreSQL**  
+   若使用 [Supabase](https://supabase.com)、[Neon](https://neon.tech)、[Railway](https://railway.app) 等，只需将各自的 **PostgreSQL 连接 URL** 配置到 `DATABASE_URL` 即可，无需改代码。
 
 ### 2. 部署 Next.js 到 Vercel（推荐）
 
@@ -212,7 +202,7 @@
 
    | 变量名 | 说明 | 示例 |
    |--------|------|------|
-   | `DATABASE_URL` | 生产 PostgreSQL 连接串（必填） | `postgresql://...?sslmode=require` |
+   | `DATABASE_URL` | 生产 PostgreSQL 连接串（必填）。若已绑定 Vercel Postgres，填 Storage 中的 `POSTGRES_PRISMA_URL` 的值 | `postgresql://...?sslmode=require` |
    | `NEXT_PUBLIC_SITE_URL` | 站点根 URL（用于 SEO、sitemap） | `https://你的域名.vercel.app` 或自定义域名 |
 
    保存后触发一次重新部署（Deployments → 最新部署 → Redeploy）。
@@ -240,9 +230,8 @@
 
 ### 5. 发布前检查清单
 
-- [ ] 已创建生产用 PostgreSQL 并拿到连接串  
-- [ ] `prisma/schema.prisma` 中 `provider` 已改为 `postgresql`（若生产用 PG）  
-- [ ] 已在部署平台配置 `DATABASE_URL` 和（建议）`NEXT_PUBLIC_SITE_URL`  
+- [ ] 已创建生产用 PostgreSQL（如 Vercel Postgres）并拿到连接串  
+- [ ] 已在部署平台配置 `DATABASE_URL`（Vercel Postgres 则填 `POSTGRES_PRISMA_URL` 的值）和（建议）`NEXT_PUBLIC_SITE_URL`  
 - [ ] 已执行 `prisma db push` 或 `prisma migrate` 初始化生产表结构  
 - [ ] 已通过爬虫或 seed 写入至少一个数据源和若干趋势数据，便于上线后验证  
 

@@ -4,30 +4,36 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:migrate-from-sqlite": "ts-node --project tsconfig.script.json script/migrate-sqlite-to-postgres.ts",
+    "db:count-tables": "ts-node --project tsconfig.script.json script/print-table-counts.ts"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "@prisma/client": "^5.22.0",
     "next": "^14.2.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "@prisma/client": "^5.22.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
-    "prisma": "^5.22.0",
-    "typescript": "^5.0.0",
     "eslint": "^8.0.0",
-    "eslint-config-next": "^14.2.0"
+    "eslint-config-next": "^14.2.0",
+    "prisma": "^5.22.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0",
+    "better-sqlite3": "^11.6.0",
+    "@types/better-sqlite3": "^7.6.11"
   }
 }
