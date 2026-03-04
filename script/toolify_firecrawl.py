@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 
 FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
 FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v2/scrape"
-TOOLIFY_TRENDING_URL = "https://www.toolify.ai/zh/Best-trending-AI-Tools"
+TOOLIFY_TRENDING_URL = "https://www.toolify.ai/Best-trending-AI-Tools"
 TOOLIFY_BASE_URL = "https://www.toolify.ai"
 
 
