@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
 import { Nav } from "@/components/Nav";
 import { getBaseUrl } from "@/lib/seo";
@@ -45,7 +46,9 @@ export default function RootLayout({
     <html lang="en" className={inter.variable}>
       <body className={inter.className}>
         <header role="banner">
-          <Nav />
+          <Suspense fallback={null}>
+            <Nav />
+          </Suspense>
         </header>
         <main id="main-content" role="main">
           {children}
