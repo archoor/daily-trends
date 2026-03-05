@@ -129,7 +129,7 @@
 
 ## 界面与样式
 
-- **界面语言**：所有界面文案（导航、标题、表头、按钮、说明等）为英文；榜单表格中的**数据内容**（工具名、描述、标签等来自数据库）保持爬虫写入的原文，不强制英文化。
+- **界面语言**：支持中英文切换。导航、标题、表头、按钮等 UI 文案默认英文，在 URL 中加 `?lang=zh` 或通过右上角语言切换按钮可切到中文界面；榜单表格中的**数据内容**（工具名、描述、标签等来自数据库）保持爬虫写入的原文。
 - **设计风格**：参考 Toolify 类榜单站，白底、紫色强调色、清晰层次。全局样式与设计变量见 `app/globals.css`。
 - **导航**：顶部 Logo「Daily Trends」、Home、各数据源、右侧 Dashboard；当前页紫色高亮。
 - **首页**：标题区 + 数据源卡片网格，悬停有边框与阴影反馈。
@@ -147,6 +147,20 @@
 - **sitemap 与 robots**：`/sitemap.xml` 动态生成（首页、各数据源列表、各条目详情）；`/robots.txt` 允许抓取并指向 sitemap。
 
 **配置**：通过环境变量 `NEXT_PUBLIC_SITE_URL` 设置站点根 URL（用于 canonical、OG、sitemap）。未设置时在 Vercel 上会使用 `VERCEL_URL`。
+
+### 数据源页面总结的中英文
+
+- 数据库表 `data_source` 中：
+  - `description` 存储**英文页面总结**（由各采集脚本在写入趋势数据时调用 Gemini 生成）；
+  - `descriptionZh` 存储**对应的中文页面总结**。
+- 前端列表页在英文界面（默认或 `?lang=en`）下优先使用 `description`，在中文界面（`?lang=zh`）下优先使用 `descriptionZh`，找不到时回退到英文或配置文案。
+- 生成中文总结的推荐流程：
+  1. 先运行各采集脚本（如 `python script/toolify_trends.py`、`python script/github_trends.py`、`python script/google_trends.py`），让它们写入/更新 `data_source.description`。
+  2. 再运行：
+     ```bash
+     python script/translate_data_source_descriptions_zh.py
+     ```
+     脚本会读取所有 `description` 非空且 `descriptionZh` 为空的数据源，通过 Gemini 翻译+改写为简体中文，并写回 `descriptionZh`。
 
 ## 发布到互联网
 

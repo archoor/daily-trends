@@ -232,13 +232,19 @@ def ingest_product_hunt_today() -> None:
 
         rows = _map_products_to_rows(source_id, products)
 
-        # 生成 Product Hunt 今日榜单的整页英文总结，写入 data_source.description
+        # 生成 Product Hunt 今日榜单的整页中英文总结，写入 data_source.description / descriptionZh
         try:
             page_context = _build_product_hunt_page_context(products)
-            summary_text = summarize_text_with_gemini("producthunt", page_context)
+            summary_en = summarize_text_with_gemini("producthunt", page_context, lang="en")
+            summary_zh = summarize_text_with_gemini("producthunt", page_context, lang="zh")
+            preview_source = summary_en or summary_zh
+            if preview_source:
+                preview = preview_source.replace("\n", " ")[:200]
+                print(f"[product_hunt][gemini] page summary preview: {preview}...")
         except Exception as e:
             print(f"[product_hunt] 生成 Gemini 页面总结失败，将跳过本次总结：{e}")
-            summary_text = None
+            summary_en = None
+            summary_zh = None
 
         with conn.cursor() as cur:
             # 全量覆盖：先删详情表（避免外键约束），再清空列表表
@@ -257,15 +263,17 @@ def ingest_product_hunt_today() -> None:
 
             cur.executemany(insert_sql, rows)
 
-            if summary_text:
+            if summary_en or summary_zh:
                 now_iso = _dt_to_iso(datetime.now(timezone.utc))
                 cur.execute(
                     """
                     UPDATE data_source
-                    SET description = %s, "updatedAt" = %s
+                    SET description = %s,
+                        "descriptionZh" = %s,
+                        "updatedAt" = %s
                     WHERE id = %s
                     """,
-                    (summary_text, now_iso, source_id),
+                    (summary_en, summary_zh, now_iso, source_id),
                 )
         conn.commit()
 

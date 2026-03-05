@@ -15,7 +15,8 @@ model DataSource {
   id        String   @id @default(cuid())
   slug      String   @unique // URL 用，如 toolify
   name      String   // 展示名，如 "Toolify AI Tools"
-  description String? // 列表页或整个数据源的概要总结（由爬虫或脚本写入）
+  description   String? // 列表页或整个数据源的英文概要总结（由爬虫或脚本写入）
+  descriptionZh String? // 同一概要的中文总结（由离线脚本翻译写入）
   baseUrl   String?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())

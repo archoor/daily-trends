@@ -2,7 +2,12 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getDataSourceBySlug, getTrendListBySource } from "@/lib/api/trends";
 import { getSourceBySlug } from "@/config/sources";
-import type { TrendItemDto, GitHubTrendItemDto, ProductHuntTrendItemDto, GoogleTrendItemDto } from "@/lib/types/trend";
+import type {
+  TrendItemDto,
+  GitHubTrendItemDto,
+  ProductHuntTrendItemDto,
+  GoogleTrendItemDto,
+} from "@/lib/types/trend";
 import { parseTags } from "@/lib/types/trend";
 import { absoluteUrl, buildItemListJsonLd } from "@/lib/seo";
 
@@ -31,14 +36,21 @@ function rankMedalClass(rank: number | null): string {
 
 interface PageProps {
   params: Promise<{ sourceId: string }>;
+  searchParams?: Promise<{ lang?: string }>;
 }
 
 /**
  * 按数据源展示趋势列表页
- * 布局：标题区 + 横向标签（数据源切换）+ 左侧边栏 + 数据表格
+ * 布局：标题区 + 数据表格
  */
-export default async function TrendListPage({ params }: PageProps) {
+export default async function TrendListPage({
+  params,
+  searchParams,
+}: PageProps) {
   const { sourceId } = await params;
+  const sp = (await searchParams) ?? {};
+  const lang = sp.lang === "zh" ? "zh" : "en";
+  const isZh = lang === "zh";
   const config = getSourceBySlug(sourceId);
   if (!config) notFound();
 
@@ -52,7 +64,11 @@ export default async function TrendListPage({ params }: PageProps) {
   const isGoogle = sourceId === "google";
 
   const rawSummary =
-    (source && "description" in source && source.description) || config.description;
+    source
+      ? isZh && (source as any).descriptionZh
+        ? (source as any).descriptionZh
+        : source.description
+      : config.description;
   const summaryParagraphs =
     typeof rawSummary === "string"
       ? rawSummary
@@ -61,10 +77,14 @@ export default async function TrendListPage({ params }: PageProps) {
           .filter(Boolean)
       : [];
 
-  const listUrl = absoluteUrl(`/trends/${sourceId}`);
+  const listUrl = absoluteUrl(`/trends/${sourceId}${isZh ? "?lang=zh" : ""}`);
   const itemListJsonLd = buildItemListJsonLd({
-    name: `Top ${config.name} Rankings`,
-    description: config.description ?? `${config.name} trend list`,
+    name: isZh
+      ? `${config.name} 热门趋势榜`
+      : `Top ${config.name} Rankings`,
+    description:
+      config.description ??
+      (isZh ? `${config.name} 趋势列表` : `${config.name} trend list`),
     listUrl,
     items: list.slice(0, 50).map((item, i) => {
       const name = "name" in item ? item.name : (item as GitHubTrendItemDto).repoFullName;
@@ -77,31 +97,71 @@ export default async function TrendListPage({ params }: PageProps) {
     }),
   });
 
+  // 支持在总结中通过 **keyword** 形式标注关键字，前端自动加粗显示
+  const renderSummaryParagraph = (text: string, idx: number) => {
+    const segments = text.split(/(\*\*.+?\*\*)/);
+    return (
+      <p key={idx} className="description">
+        {segments.map((seg, i) => {
+          if (seg.startsWith("**") && seg.endsWith("**") && seg.length > 4) {
+            return <strong key={i}>{seg.slice(2, -2)}</strong>;
+          }
+          return <span key={i}>{seg}</span>;
+        })}
+      </p>
+    );
+  };
+
+  const texts = {
+    subtitle: isZh ? "每日趋势榜单" : "Daily Trends Rankings",
+    titlePrefix: isZh ? `${config.name} 热门趋势` : `Top ${config.name} Rankings`,
+    fallbackDesc: isZh
+      ? "趋势列表。数据由外部爬虫写入数据库，本页面仅负责展示。"
+      : "Trend list. Data is written by external crawlers; this page only displays it.",
+    empty: isZh
+      ? "暂无数据。请先运行外部爬虫（例如 Python 脚本）写入数据库。"
+      : "No data yet. Data is written to the database by an external crawler (e.g. Python).",
+    googleHeaders: isZh
+      ? ["排行", "趋势名称", "搜索量", "已开始", "结束时间", "趋势细分"]
+      : ["Rank", "Trend name", "Search volume", "Started", "Ended", "Related"],
+    productHuntHeaders: isZh
+      ? ["排行", "图标", "产品名", "描述", "类别", "评论数", "点赞数"]
+      : ["Rank", "Icon", "Product", "Description", "Category", "Comments", "Upvotes"],
+    githubHeaders: isZh
+      ? ["排行", "仓库", "描述", "语言", "星标", "Fork", "今日新增星标", "增长率"]
+      : ["Rank", "Repo", "Description", "Language", "Stars", "Fork", "Stars today", "Growth"],
+    toolifyHeaders: isZh
+      ? ["排行", "工具", "月访问量", "增长", "增长率", "介绍", "标签"]
+      : ["Rank", "Tool", "Monthly visits", "Growth", "Growth rate", "Intro", "Tags"],
+    active: isZh ? "活跃" : "Active",
+    andMore: (more: number) =>
+      isZh ? `等 ${more} 个` : `and ${more} more`,
+    starsToday: (count: number) =>
+      isZh ? `${count} 个今日新增星标` : `${count} stars today`,
+  };
+
   return (
-    <article aria-label={`${config.name} trends`}>
+    <article aria-label={isZh ? `${config.name} 趋势` : `${config.name} trends`}>
       {/* 页面标题区 */}
       <section className="page-title-section" aria-labelledby="list-title">
-        <p className="subtitle" id="list-subtitle">Daily Trends Rankings</p>
+        <p className="subtitle" id="list-subtitle">
+          {texts.subtitle}
+        </p>
         <h1 id="list-title" className="title">
-          Top {config.name} Rankings
+          {texts.titlePrefix}
         </h1>
         {summaryParagraphs.length > 0 ? (
-          summaryParagraphs.map((p, idx) => (
-            <p key={idx} className="description">
-              {p}
-            </p>
-          ))
+          summaryParagraphs.map(renderSummaryParagraph)
         ) : (
           <p className="description">
-            {config.description ??
-              "Trend list. Data is written by external crawlers; this page only displays it."}
+            {config.description ?? texts.fallbackDesc}
           </p>
         )}
       </section>
 
       {list.length === 0 ? (
         <div className="empty-state">
-          No data yet. Data is written to the database by an external crawler (e.g. Python).
+          {texts.empty}
         </div>
       ) : (
         <div className="table-wrap">
@@ -109,12 +169,12 @@ export default async function TrendListPage({ params }: PageProps) {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th className="col-rank">Rank</th>
-                    <th>Trend name</th>
-                    <th>Search volume</th>
-                    <th>Started</th>
-                    <th>Ended</th>
-                    <th>Related</th>
+                    <th className="col-rank">{texts.googleHeaders[0]}</th>
+                    <th>{texts.googleHeaders[1]}</th>
+                    <th>{texts.googleHeaders[2]}</th>
+                    <th>{texts.googleHeaders[3]}</th>
+                    <th>{texts.googleHeaders[4]}</th>
+                    <th>{texts.googleHeaders[5]}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -145,14 +205,16 @@ export default async function TrendListPage({ params }: PageProps) {
                         </td>
                         <td>
                           {startedLabel}
-                          {item.isActive && <span className="growth-up"> Active</span>}
+                          {item.isActive && (
+                            <span className="growth-up"> {texts.active}</span>
+                          )}
                         </td>
                         <td>{endedLabel}</td>
                         <td className="col-desc">
                           {keywords.length > 0 ? keywords.join(" · ") : "—"}
                           {item.moreRelatedCount != null && item.moreRelatedCount > 0 && (
                             <span style={{ display: "block", marginTop: "0.125rem" }}>
-                              and {item.moreRelatedCount} more
+                              {texts.andMore(item.moreRelatedCount)}
                             </span>
                           )}
                         </td>
@@ -165,13 +227,13 @@ export default async function TrendListPage({ params }: PageProps) {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th className="col-rank">Rank</th>
-                    <th>Icon</th>
-                    <th>Product</th>
-                    <th>Description</th>
-                    <th>Category</th>
-                    <th>Comments</th>
-                    <th>Upvotes</th>
+                    <th className="col-rank">{texts.productHuntHeaders[0]}</th>
+                    <th>{texts.productHuntHeaders[1]}</th>
+                    <th>{texts.productHuntHeaders[2]}</th>
+                    <th>{texts.productHuntHeaders[3]}</th>
+                    <th>{texts.productHuntHeaders[4]}</th>
+                    <th>{texts.productHuntHeaders[5]}</th>
+                    <th>{texts.productHuntHeaders[6]}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -202,14 +264,14 @@ export default async function TrendListPage({ params }: PageProps) {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th className="col-rank">Rank</th>
-                    <th>Repo</th>
-                    <th>Description</th>
-                    <th>Language</th>
-                    <th>Stars</th>
-                    <th>Fork</th>
-                    <th>Stars today</th>
-                    <th>Growth</th>
+                    <th className="col-rank">{texts.githubHeaders[0]}</th>
+                    <th>{texts.githubHeaders[1]}</th>
+                    <th>{texts.githubHeaders[2]}</th>
+                    <th>{texts.githubHeaders[3]}</th>
+                    <th>{texts.githubHeaders[4]}</th>
+                    <th>{texts.githubHeaders[5]}</th>
+                    <th>{texts.githubHeaders[6]}</th>
+                    <th>{texts.githubHeaders[7]}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -229,7 +291,11 @@ export default async function TrendListPage({ params }: PageProps) {
                         <td>{item.language ?? "—"}</td>
                         <td>{item.stars.toLocaleString()}</td>
                         <td>{item.forks.toLocaleString()}</td>
-                        <td>{item.starsToday > 0 ? `${item.starsToday} stars today` : "—"}</td>
+                        <td>
+                          {item.starsToday > 0
+                            ? texts.starsToday(item.starsToday)
+                            : "—"}
+                        </td>
                         <td>
                           {rate != null ? <span className="growth-up">{rate}%</span> : "—"}
                         </td>
@@ -242,13 +308,13 @@ export default async function TrendListPage({ params }: PageProps) {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th className="col-rank">Rank</th>
-                    <th>Tool</th>
-                    <th>Monthly visits</th>
-                    <th>Growth</th>
-                    <th>Growth rate</th>
-                    <th>Intro</th>
-                    <th>Tags</th>
+                    <th className="col-rank">{texts.toolifyHeaders[0]}</th>
+                    <th>{texts.toolifyHeaders[1]}</th>
+                    <th>{texts.toolifyHeaders[2]}</th>
+                    <th>{texts.toolifyHeaders[3]}</th>
+                    <th>{texts.toolifyHeaders[4]}</th>
+                    <th>{texts.toolifyHeaders[5]}</th>
+                    <th>{texts.toolifyHeaders[6]}</th>
                   </tr>
                 </thead>
                 <tbody>

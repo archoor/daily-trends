@@ -258,13 +258,18 @@ def ingest_google_trends(
             source_id, trending_items, snapshot_at
         )
 
-        # 生成 Google Trends 整页英文总结，写入 data_source.description
+        # 生成 Google Trends 整页中英文总结，写入 data_source.description / descriptionZh
         try:
             page_context = _build_google_page_context(trending_items, geo, hours)
-            summary_text = summarize_text_with_gemini("google", page_context)
+            summary_en = summarize_text_with_gemini("google", page_context, lang="en")
+            summary_zh = summarize_text_with_gemini("google", page_context, lang="zh")
+            preview_source = summary_en or summary_zh
+            if preview_source:
+                print("[google_trends][gemini] full page summary preview:\n", preview_source.replace("\n", " ")[:200], "...")
         except Exception as e:
             print(f"[google_trends] 生成 Gemini 页面总结失败，将跳过本次总结：{e}")
-            summary_text = None
+            summary_en = None
+            summary_zh = None
 
         with conn.cursor() as cur:
             cur.execute(
@@ -282,15 +287,17 @@ def ingest_google_trends(
             """
 
             cur.executemany(insert_sql, rows)
-            if summary_text:
+            if summary_en or summary_zh:
                 now_iso = _dt_to_iso(datetime.now(timezone.utc))
                 cur.execute(
                     """
                     UPDATE data_source
-                    SET description = %s, "updatedAt" = %s
+                    SET description = %s,
+                        "descriptionZh" = %s,
+                        "updatedAt" = %s
                     WHERE id = %s
                     """,
-                    (summary_text, now_iso, source_id),
+                    (summary_en, summary_zh, now_iso, source_id),
                 )
         conn.commit()
 

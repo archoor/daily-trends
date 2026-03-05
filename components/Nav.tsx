@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { SOURCE_CONFIGS } from "@/config/sources";
 
 /**
@@ -9,6 +9,29 @@ import { SOURCE_CONFIGS } from "@/config/sources";
  */
 export function Nav() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const currentLang = searchParams.get("lang") === "zh" ? "zh" : "en";
+
+  const setLang = (lang: "en" | "zh") => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (lang === "en") {
+      params.delete("lang");
+    } else {
+      params.set("lang", "zh");
+    }
+    const query = params.toString();
+    const href = query ? `${pathname}?${query}` : pathname;
+    router.push(href);
+  };
+
+  const t = {
+    home: currentLang === "zh" ? "首页" : "Home",
+    trendsLabel: currentLang === "zh" ? "趋势列表" : "Trends",
+    langEn: "EN",
+    langZh: "中文",
+  };
 
   return (
     <div className="header-inner">
@@ -19,20 +42,22 @@ export function Nav() {
         </svg>
         Daily Trends
       </Link>
-      <nav className="nav-links">
+      <nav className="nav-links" aria-label={t.trendsLabel}>
         <Link
-          href="/"
+          href={currentLang === "zh" ? "/?lang=zh" : "/"}
           className={pathname === "/" ? "nav-link active" : "nav-link"}
         >
-          Home
+          {t.home}
         </Link>
         {SOURCE_CONFIGS.map((s) => {
           const href = `/trends/${s.slug}`;
-          const isActive = pathname === href || pathname.startsWith(href + "/");
+          const hrefWithLang = currentLang === "zh" ? `${href}?lang=zh` : href;
+          const isActive =
+            pathname === href || pathname.startsWith(href + "/");
           return (
             <Link
               key={s.slug}
-              href={href}
+              href={hrefWithLang}
               className={isActive ? "nav-link active" : "nav-link"}
             >
               {s.name}
@@ -40,6 +65,26 @@ export function Nav() {
           );
         })}
       </nav>
+      <div className="lang-switch" aria-label="Language switch">
+        <button
+          type="button"
+          className={
+            currentLang === "en" ? "lang-btn active" : "lang-btn"
+          }
+          onClick={() => setLang("en")}
+        >
+          {t.langEn}
+        </button>
+        <button
+          type="button"
+          className={
+            currentLang === "zh" ? "lang-btn active" : "lang-btn"
+          }
+          onClick={() => setLang("zh")}
+        >
+          {t.langZh}
+        </button>
+      </div>
     </div>
   );
 }

@@ -19,29 +19,54 @@ export const metadata: Metadata = {
   alternates: { canonical: baseUrl },
 };
 
-export default function HomePage() {
+interface HomePageProps {
+  searchParams?: Promise<{ lang?: string }>;
+}
+
+export default async function HomePage({ searchParams }: HomePageProps) {
+  const sp = (await searchParams) ?? {};
+  const lang = sp.lang === "zh" ? "zh" : "en";
   const webSiteJsonLd = buildWebSiteJsonLd();
 
+  const isZh = lang === "zh";
+
+  const texts = {
+    heroTitle: isZh ? "每日趋势榜" : "Daily Trends",
+    heroDesc: isZh
+      ? "聚合多个站点的 AI 与产品趋势。选择下方数据源查看排行榜。"
+      : "Aggregated trends from multiple sources. Pick a source below to view rankings.",
+    sourcesLabel: isZh ? "趋势数据源" : "Trend sources",
+    viewTrendsAria: (name: string) =>
+      isZh ? `查看 ${name} 趋势` : `View ${name} trends`,
+    defaultDesc: isZh ? "趋势列表" : "Trend list",
+  };
+
   return (
-    <article aria-label="Home">
+    <article aria-label={isZh ? "首页" : "Home"}>
       <section className="home-hero" aria-labelledby="hero-heading">
-        <h1 id="hero-heading">Daily Trends</h1>
-        <p>
-          Aggregated trends from multiple sources. Pick a source below to view rankings.
-        </p>
+        <h1 id="hero-heading">{texts.heroTitle}</h1>
+        <p>{texts.heroDesc}</p>
       </section>
-      <section className="source-cards" aria-label="Trend sources">
-        {SOURCE_CONFIGS.map((s) => (
-          <Link
-            key={s.slug}
-            href={`/trends/${s.slug}`}
-            className="source-card"
-            aria-label={`View ${s.name} trends`}
-          >
-            <div className="name">{s.name}</div>
-            <div className="desc">{s.description ?? "Trend list"}</div>
-          </Link>
-        ))}
+      <section
+        className="source-cards"
+        aria-label={texts.sourcesLabel}
+      >
+        {SOURCE_CONFIGS.map((s) => {
+          const href = `/trends/${s.slug}${isZh ? "?lang=zh" : ""}`;
+          return (
+            <Link
+              key={s.slug}
+              href={href}
+              className="source-card"
+              aria-label={texts.viewTrendsAria(s.name)}
+            >
+              <div className="name">{s.name}</div>
+              <div className="desc">
+                {s.description ?? texts.defaultDesc}
+              </div>
+            </Link>
+          );
+        })}
       </section>
       <script
         type="application/ld+json"

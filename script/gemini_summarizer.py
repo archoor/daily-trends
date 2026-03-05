@@ -1,8 +1,8 @@
 """
 基于 Gemini 的通用文案总结工具。
 
-按数据源 slug 读取对应提示词文件（script/prompts/{slug}_summary.txt），
-将结构化内容拼成一段文本传入 Gemini，返回中文总结。
+按数据源 slug 读取对应提示词文件（script/prompts/{slug}_summary*.txt），
+将结构化内容拼成一段文本传入 Gemini，返回英文或中文页面级总结。
 
 若未配置 GEMINI_API_KEY，则打印提示并直接返回 None，不中断采集流程。
 """
@@ -52,19 +52,25 @@ def _load_env_for_script() -> None:
                     os.environ[key] = value
 
 
-def _load_prompt(source_slug: str) -> str:
+def _load_prompt(source_slug: str, lang: str = "en") -> str:
     """
-    根据数据源 slug 读取提示词：
-    - 优先 script/prompts/{slug}_summary.txt
-    - 无对应文件时退回 script/prompts/default_summary.txt
+    根据数据源 slug 与目标语言读取提示词：
+    - 英文：script/prompts/{slug}_summary.txt，fallback 为 default_summary.txt
+    - 中文：script/prompts/{slug}_summary_zh.txt，fallback 为 default_summary_zh.txt
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     prompts_dir = os.path.join(script_dir, "prompts")
 
-    candidates = [
-        os.path.join(prompts_dir, f"{source_slug}_summary.txt"),
-        os.path.join(prompts_dir, "default_summary.txt"),
-    ]
+    if lang == "zh":
+        candidates = [
+            os.path.join(prompts_dir, f"{source_slug}_summary_zh.txt"),
+            os.path.join(prompts_dir, "default_summary_zh.txt"),
+        ]
+    else:
+        candidates = [
+            os.path.join(prompts_dir, f"{source_slug}_summary.txt"),
+            os.path.join(prompts_dir, "default_summary.txt"),
+        ]
 
     for path in candidates:
         if os.path.isfile(path):
@@ -74,22 +80,33 @@ def _load_prompt(source_slug: str) -> str:
                 return content
 
     # 极端情况：提示词文件缺失时，给一个兜底提示
+    if lang == "zh":
+        return (
+            "你是一名中文分析师，负责为一个趋势榜单页面撰写简短的中文总结。"
+            "请基于给定的结构化数据，用 1-3 个自然段概括今天最有意思的变化和主题，语气自然、易读。"
+        )
     return (
-        "你是一名中文产品运营，负责为一个趋势榜单条目撰写简短总结。"
-        "请基于给定的字段信息，用 2-3 句话概括该条目的核心亮点，适合作为详情页开头摘要。"
+        "You are an English-speaking analyst writing a short, engaging overview "
+        "for a trends page. In 1-3 short paragraphs, describe the most interesting "
+        "changes and themes in clear, simple English."
     )
 
 
-def summarize_text_with_gemini(source_slug: str, content: str) -> Optional[str]:
+def summarize_text_with_gemini(
+    source_slug: str,
+    content: str,
+    lang: str = "en",
+) -> Optional[str]:
     """
     使用 Gemini 为指定数据源生成页面内容总结。
 
     参数：
     - source_slug: 数据源标识，如 toolify/github/producthunt/google
     - content: 已拼接好的上下文文本（包含名称、核心字段等）
+    - lang: 输出语言，"en" 表示英文总结，"zh" 表示中文总结（默认 "en"）
 
     返回：
-    - 生成的中文总结字符串；若环境未配置或请求失败则返回 None。
+    - 生成的总结字符串（英文或中文）；若环境未配置或请求失败则返回 None。
     """
     if not content or not content.strip():
         return None
@@ -108,7 +125,7 @@ def summarize_text_with_gemini(source_slug: str, content: str) -> Optional[str]:
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     )
 
-    system_prompt = _load_prompt(source_slug)
+    system_prompt = _load_prompt(source_slug, lang=lang)
 
     payload = {
         "contents": [
@@ -125,7 +142,9 @@ def summarize_text_with_gemini(source_slug: str, content: str) -> Optional[str]:
         ],
         "generationConfig": {
             "temperature": 0.5,
-            "maxOutputTokens": 256,
+            # 页面级总结允许更长输出（最多约 400 词），
+            # 适配不同模型时可按需在环境变量中覆盖。
+            "maxOutputTokens": int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "900")),
         },
     }
 
@@ -165,12 +184,19 @@ def summarize_text_with_gemini(source_slug: str, content: str) -> Optional[str]:
         print(f"[gemini] candidates[0] 中没有 content.parts：{candidates[0]}")
         return None
 
-    # 只取第一段文本
-    text = parts[0].get("text") if isinstance(parts[0], dict) else None
-    if not text:
+    # 拼接所有文本段，避免只取第一段导致总结被截断
+    texts = []
+    for part in parts:
+        if isinstance(part, dict):
+            t = part.get("text")
+            if isinstance(t, str) and t.strip():
+                texts.append(t.strip())
+
+    full_text = "\n\n".join(texts).strip()
+    if not full_text:
         return None
 
-    return text.strip()
+    return full_text
 
 
 __all__ = ["summarize_text_with_gemini", "GeminiSummaryError"]

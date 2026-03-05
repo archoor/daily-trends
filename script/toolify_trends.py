@@ -216,15 +216,24 @@ def ingest_toolify_trends() -> None:
             print("[toolify] 未解析到任何工具，跳过入库。")
             return
 
+        # 只保留前 50 个工具，避免一次采集过多条目
+        tools = tools[:50]
+
         rows = _map_tools_to_rows(source_id, tools)
 
-        # 为当前数据源生成整页级别的英文总结，写入 data_source.description
+        # 为当前数据源生成整页级别的中英文总结，写入 data_source.description / descriptionZh
         try:
             page_context = _build_toolify_page_context(tools)
-            summary_text = summarize_text_with_gemini("toolify", page_context)
+            summary_en = summarize_text_with_gemini("toolify", page_context, lang="en")
+            summary_zh = summarize_text_with_gemini("toolify", page_context, lang="zh")
+            preview_source = summary_en or summary_zh
+            if preview_source:
+                preview = preview_source.replace("\n", " ")[:200]
+                print(f"[toolify][gemini] page summary preview: {preview}...")
         except Exception as e:
             print(f"[toolify] 生成 Gemini 页面总结失败，将跳过本次总结：{e}")
-            summary_text = None
+            summary_en = None
+            summary_zh = None
 
         with conn.cursor() as cur:
             # 全量覆盖：先删详情表（避免外键约束），再清空本源的列表表
@@ -249,15 +258,17 @@ def ingest_toolify_trends() -> None:
 
             cur.executemany(insert_sql, rows)
 
-            if summary_text:
+            if summary_en or summary_zh:
                 now_iso = _dt_to_iso(datetime.now(timezone.utc))
                 cur.execute(
                     """
                     UPDATE data_source
-                    SET description = %s, "updatedAt" = %s
+                    SET description = %s,
+                        "descriptionZh" = %s,
+                        "updatedAt" = %s
                     WHERE id = %s
                     """,
-                    (summary_text, now_iso, source_id),
+                    (summary_en, summary_zh, now_iso, source_id),
                 )
         conn.commit()
 
