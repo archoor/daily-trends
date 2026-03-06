@@ -232,6 +232,11 @@ def _build_google_page_context(items: List[Dict[str, Any]], geo: str, hours: int
     return "\n".join(lines)
 
 
+def _today_utc() -> datetime:
+    """采集当天 0 点 UTC，用于 snapshotAt 与「仅删当天」逻辑。"""
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def ingest_google_trends(
     *,
     geo: str = "US",
@@ -252,8 +257,7 @@ def ingest_google_trends(
             hl=hl,
         )
 
-        snapshot_at = datetime.now(timezone.utc)
-
+        snapshot_at = _today_utc()
         rows = _map_trending_to_rows(
             source_id, trending_items, snapshot_at
         )
@@ -272,9 +276,21 @@ def ingest_google_trends(
             summary_zh = None
 
         with conn.cursor() as cur:
+            # 仅删除「采集当天」的数据，保留历史日期
+            today_date = snapshot_at.date()
             cur.execute(
-                'DELETE FROM google_trend_item WHERE "sourceId" = %s',
-                (source_id,),
+                """
+                DELETE FROM google_trend_detail
+                WHERE "trendId" IN (
+                    SELECT id FROM google_trend_item
+                    WHERE "sourceId" = %s AND DATE("snapshotAt") = %s
+                )
+                """,
+                (source_id, today_date),
+            )
+            cur.execute(
+                'DELETE FROM google_trend_item WHERE "sourceId" = %s AND DATE("snapshotAt") = %s',
+                (source_id, today_date),
             )
 
             insert_sql = """
@@ -289,6 +305,7 @@ def ingest_google_trends(
             cur.executemany(insert_sql, rows)
             if summary_en or summary_zh:
                 now_iso = _dt_to_iso(datetime.now(timezone.utc))
+                today_ymd = snapshot_at.date().isoformat()
                 cur.execute(
                     """
                     UPDATE data_source
@@ -298,6 +315,17 @@ def ingest_google_trends(
                     WHERE id = %s
                     """,
                     (summary_en, summary_zh, now_iso, source_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO source_daily_summary (id, "sourceId", "snapshotDate", description, "descriptionZh", "createdAt", "updatedAt")
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT ("sourceId", "snapshotDate") DO UPDATE SET
+                        description = EXCLUDED.description,
+                        "descriptionZh" = EXCLUDED."descriptionZh",
+                        "updatedAt" = EXCLUDED."updatedAt"
+                    """,
+                    (uuid4().hex, source_id, today_ymd, summary_en, summary_zh, now_iso, now_iso),
                 )
         conn.commit()
 

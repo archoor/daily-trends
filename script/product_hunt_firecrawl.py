@@ -65,6 +65,13 @@ def _clean_text(text: str) -> str:
     return " ".join(text.split()) if text else ""
 
 
+def _to_int_or_none(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _extract_posts_from_apollo_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     从 Apollo SSR 的 JSON payload 中递归提取 __typename == "Post" 的节点。
@@ -132,14 +139,49 @@ def parse_top_products_launching_today(html: str) -> List[Dict]:
                 or post.get("subtitle")
                 or ""
             )
-            comments = (
+            comments_raw = (
                 post.get("commentsCount")
                 or (post.get("comments") or {}).get("totalCount")
             )
-            upvotes = (
+            upvotes_raw = (
                 post.get("votesCount")
                 or (post.get("votes") or {}).get("totalCount")
             )
+            comments = _to_int_or_none(comments_raw)
+            upvotes = _to_int_or_none(upvotes_raw)
+
+            # 分类：尽量从 topics / categories 字段提取名称列表
+            categories_parts: list[str] = []
+            topics = post.get("topics") or post.get("categories")
+            if isinstance(topics, dict):
+                edges = topics.get("edges") or []
+                for edge in edges:
+                    node = edge.get("node") or {}
+                    label = (
+                        node.get("name")
+                        or node.get("displayName")
+                        or node.get("slug")
+                        or ""
+                    )
+                    label = _clean_text(str(label))
+                    if label:
+                        categories_parts.append(label)
+            elif isinstance(topics, list):
+                for t in topics:
+                    if isinstance(t, dict):
+                        label = (
+                            t.get("name")
+                            or t.get("displayName")
+                            or t.get("slug")
+                            or ""
+                        )
+                    else:
+                        label = str(t)
+                    label = _clean_text(label)
+                    if label:
+                        categories_parts.append(label)
+
+            categories = " • ".join(dict.fromkeys(categories_parts)) if categories_parts else ""
 
             url = f"https://www.producthunt.com/posts/{slug}" if slug else None
 
@@ -148,7 +190,7 @@ def parse_top_products_launching_today(html: str) -> List[Dict]:
                     "rank": idx,
                     "name": name,
                     "description": description,
-                    "categories": "",  # Apollo 数据里如有分类字段，可后续补充
+                    "categories": categories,
                     "commentCount": comments,
                     "upvoteCount": upvotes,
                     "url": url,
@@ -213,13 +255,24 @@ def parse_top_products_launching_today(html: str) -> List[Dict]:
         if vote_btn:
             p = vote_btn.find("p")
             if p:
-                try:
-                    upvotes = int(_clean_text(p.get_text()))
-                except ValueError:
-                    upvotes = None
+                upvotes = _to_int_or_none(_clean_text(p.get_text()))
 
-        # 评论数：列表页上不明显展示，先留空
+        # 评论数：comment 按钮上的小数字（如果有）
         comments = None
+        # 优先通过 data-test / aria-label 中包含 comment/评论 的按钮查找
+        comment_btn = sec.find(
+            "button",
+            attrs={"data-test": re.compile(r"comment", re.IGNORECASE)},
+        )
+        if not comment_btn:
+            comment_btn = sec.find(
+                "button",
+                attrs={"aria-label": re.compile(r"comment", re.IGNORECASE)},
+            )
+        if comment_btn:
+            p = comment_btn.find("p")
+            if p:
+                comments = _to_int_or_none(_clean_text(p.get_text()))
 
         rank += 1
         products.append(

@@ -26,8 +26,24 @@ model DataSource {
   githubTrendItems      GitHubTrendItem[]
   productHuntTrendItems ProductHuntTrendItem[]
   googleTrendItems      GoogleTrendItem[]
+  dailySummaries       SourceDailySummary[]
 
   @@map("data_source")
+}
+
+/// 数据源按日存档的列表页总结（切换日期时展示对应日期的总结）
+model SourceDailySummary {
+  id           String   @id @default(cuid())
+  sourceId     String
+  source       DataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  snapshotDate String   // 日期 yyyy-mm-dd，与趋势条目的 DATE(snapshotAt) 对齐
+  description  String?  // 该日榜单的英文总结（由爬虫写入）
+  descriptionZh String? // 该日榜单的中文总结
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([sourceId, snapshotDate])
+  @@map("source_daily_summary")
 }
 
 /// 趋势条目（列表行）- 数据源：Toolify；表头：排行 | 工具 | 月访问量 | 增长 | 增长率 | 介绍 | 标签

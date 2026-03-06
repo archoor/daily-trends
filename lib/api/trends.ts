@@ -124,6 +124,35 @@ export async function getDataSourceBySlug(slug: string) {
   });
 }
 
+/** 某数据源在指定日期的列表页总结；不传日期时返回最新一天的总结。
+ * 指定日期时：只查 source_daily_summary，无存档则返回 null（不拿 DataSource 顶替，避免昨天/今天显示同一段总结）。
+ * 未指定日期时：先查最新一天的存档，没有再回退到 DataSource。 */
+export async function getSourceSummaryForDate(
+  sourceId: string,
+  snapshotDate?: string | null
+): Promise<{ description: string | null; descriptionZh: string | null }> {
+  if (snapshotDate) {
+    const row = await prisma.sourceDailySummary.findUnique({
+      where: { sourceId_snapshotDate: { sourceId, snapshotDate } },
+      select: { description: true, descriptionZh: true },
+    });
+    return row ? { description: row.description, descriptionZh: row.descriptionZh } : { description: null, descriptionZh: null };
+  }
+  const row = await prisma.sourceDailySummary.findFirst({
+    where: { sourceId },
+    orderBy: { snapshotDate: "desc" },
+    select: { description: true, descriptionZh: true },
+  });
+  if (row) return { description: row.description, descriptionZh: row.descriptionZh };
+  const source = await prisma.dataSource.findUnique({
+    where: { id: sourceId },
+    select: { description: true, descriptionZh: true },
+  });
+  return source
+    ? { description: source.description, descriptionZh: source.descriptionZh }
+    : { description: null, descriptionZh: null };
+}
+
 export async function getAllDataSources() {
   return prisma.dataSource.findMany({
     where: { isActive: true },
@@ -131,7 +160,52 @@ export async function getAllDataSources() {
   });
 }
 
-/** 按数据源返回趋势列表：Toolify / GitHub / Product Hunt / Google 分别查对应表 */
+/** 某数据源在库中有数据的日期列表（倒序，最新在前），用于日期选择条 */
+export async function getAvailableSnapshotDates(
+  sourceId: string,
+  limit: number = 50
+): Promise<string[]> {
+  const source = await prisma.dataSource.findUnique({
+    where: { id: sourceId },
+    select: { slug: true },
+  });
+  if (!source) return [];
+
+  type Row = { d: Date };
+  const table = (() => {
+    switch (source.slug) {
+      case "github":
+        return "github_trend_item";
+      case "producthunt":
+        return "product_hunt_trend_item";
+      case "google":
+        return "google_trend_item";
+      default:
+        return "toolify_trend_item";
+    }
+  })();
+
+  if (source.slug === "google" && typeof prisma.googleTrendItem === "undefined") {
+    return [];
+  }
+
+  const rows = await prisma.$queryRawUnsafe<Row[]>(
+    `SELECT DISTINCT DATE("snapshotAt") as d FROM ${table} WHERE "sourceId" = $1 ORDER BY d DESC LIMIT $2`,
+    sourceId,
+    limit
+  );
+  return rows.map((r) => r.d.toISOString().slice(0, 10));
+}
+
+/** 某数据源最新有数据的日期（当天 0 点），无数据返回 null */
+export async function getLatestSnapshotDate(sourceId: string): Promise<Date | null> {
+  const dates = await getAvailableSnapshotDates(sourceId, 1);
+  if (dates.length === 0) return null;
+  const d = new Date(dates[0] + "T00:00:00.000Z");
+  return d;
+}
+
+/** 按数据源返回趋势列表：Toolify / GitHub / Product Hunt / Google 分别查对应表；不传 snapshotAt 时默认取最新一天 */
 export async function getTrendListBySource(
   sourceId: string,
   options?: { snapshotAt?: Date; limit?: number }
@@ -142,8 +216,10 @@ export async function getTrendListBySource(
   });
   if (!source) return [];
 
-  const snapshotAt = options?.snapshotAt;
-  const startOfDay = snapshotAt ? new Date(snapshotAt) : null;
+  let startOfDay: Date | null = options?.snapshotAt ? new Date(options.snapshotAt) : null;
+  if (!startOfDay) {
+    startOfDay = await getLatestSnapshotDate(sourceId);
+  }
   if (startOfDay) startOfDay.setHours(0, 0, 0, 0);
   const dateFilter =
     startOfDay
@@ -196,10 +272,11 @@ export async function getTrendListBySource(
   return list.map(serializeToolifyItem);
 }
 
-/** 按数据源与 slug 获取单条趋势（含详情）；按 source.slug 分发到对应表 */
+/** 按数据源与 slug 获取单条趋势（含详情）；支持 options.snapshotAt 按指定日期取该条 */
 export async function getTrendBySourceAndSlug(
   sourceId: string,
-  slug: string
+  slug: string,
+  options?: { snapshotAt?: Date }
 ): Promise<
   | (TrendItemDto & { detail?: { description: string | null; rawJson: string | null; fetchedAt: Date } })
   | (GitHubTrendItemDto & { detail?: { description: string | null; rawJson: string | null; fetchedAt: Date } })
@@ -213,13 +290,25 @@ export async function getTrendBySourceAndSlug(
   });
   if (!source) return null;
 
+  let snapshotAtFilter: { gte: Date; lt: Date } | undefined;
+  if (options?.snapshotAt) {
+    const start = new Date(options.snapshotAt);
+    start.setHours(0, 0, 0, 0);
+    snapshotAtFilter = {
+      gte: start,
+      lt: new Date(start.getTime() + 24 * 60 * 60 * 1000),
+    };
+  }
+
+  const whereBase = { sourceId, slug, ...(snapshotAtFilter && { snapshotAt: snapshotAtFilter }) };
+
   if (source.slug === "google") {
     if (typeof prisma.googleTrendItem === "undefined") {
       console.warn("[trends] prisma.googleTrendItem 未就绪，请停止 dev 后执行 npx prisma generate，删除 .next 再重新 npm run dev");
       return null;
     }
     const row = await prisma.googleTrendItem.findFirst({
-      where: { sourceId, slug },
+      where: whereBase,
       include: {
         source: { select: { slug: true, name: true, baseUrl: true } },
         googleDetail: true,
@@ -236,7 +325,7 @@ export async function getTrendBySourceAndSlug(
 
   if (source.slug === "github") {
     const row = await prisma.gitHubTrendItem.findFirst({
-      where: { sourceId, slug },
+      where: whereBase,
       include: {
         source: { select: { slug: true, name: true, baseUrl: true } },
         githubDetail: true,
@@ -253,7 +342,7 @@ export async function getTrendBySourceAndSlug(
 
   if (source.slug === "producthunt") {
     const row = await prisma.productHuntTrendItem.findFirst({
-      where: { sourceId, slug },
+      where: whereBase,
       include: {
         source: { select: { slug: true, name: true, baseUrl: true } },
         productHuntDetail: true,
@@ -269,7 +358,7 @@ export async function getTrendBySourceAndSlug(
   }
 
   const row = await prisma.toolifyTrendItem.findFirst({
-    where: { sourceId, slug },
+    where: whereBase,
     include: {
       source: { select: { slug: true, name: true, baseUrl: true } },
       toolifyDetail: true,

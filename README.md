@@ -83,6 +83,7 @@
 | Product Hunt 趋势详情 | `product_hunt_trend_detail` | `ProductHuntTrendDetail` |
 | Google 趋势列表       | `google_trend_item`       | `GoogleTrendItem`       |
 | Google 趋势详情       | `google_trend_detail`     | `GoogleTrendDetail`     |
+| 数据源按日总结存档   | `source_daily_summary`    | `SourceDailySummary`    |
 
 - **DataSource（表 `data_source`）**：每个趋势站一条，`slug` 与 `config/sources.ts` 一致（如 `toolify`、`github`）。
 - **ToolifyTrendItem（表 `toolify_trend_item`）**：`sourceId` 关联 DataSource；`externalId`、`snapshotAt` 与 `sourceId` 联合唯一；`slug` 用于详情页 URL。字段与 Toolify 列表表头对应：`rank`、`name`、`url`、`monthlyVisits`（BigInt）、`growthDisplay`、`growthRate`、`summary`、`tags`。
@@ -93,6 +94,7 @@
 - **ProductHuntTrendDetail（表 `product_hunt_trend_detail`）**：可选，`description` 存详情页长描述；`rawJson` 可存自定义字段。
 - **GoogleTrendItem（表 `google_trend_item`）**：`sourceId` 关联 DataSource；`externalId` 一般为趋势词条名；`slug` 用于详情页 URL。字段与 Google 趋势页对齐：`rank`、`name`、`searchVolume`（BigInt）、`searchVolumeDisplay`（如 "500万+"）、`growthRate`（增长百分比）、`startedAt`、`endedAt`（趋势结束时间）、`isActive`、`relatedKeywords`（JSON 数组字符串）、`moreRelatedCount`。
 - **GoogleTrendDetail（表 `google_trend_detail`）**：可选，`description` 存详情页长描述；`rawJson` 可存自定义字段。
+- **SourceDailySummary（表 `source_daily_summary`）**：按日存档列表页总结。`sourceId` 关联 DataSource，`snapshotDate` 为日期字符串（yyyy-mm-dd），与趋势条目的采集日对齐；`description` / `descriptionZh` 为该日榜单的中英文总结。爬虫每次采集会 upsert 当天的总结；列表页切换日期时展示对应日期的总结。
 
 新增数据源时：在 `config/sources.ts` 增加配置，在 schema 中增加该源的 `XxxTrendItem`/`XxxTrendDetail` 及 `@@map("xxx_trend_item")`，并在 `lib/api/trends.ts` 中按 `source.slug` 分发查询对应表，爬虫写入对应 `DataSource` 及该源表即可。
 
@@ -250,6 +252,82 @@
 - [ ] 已通过爬虫或 seed 写入至少一个数据源和若干趋势数据，便于上线后验证  
 
 完成以上步骤后，你的趋势站即可通过 Vercel 提供的 URL 或自定义域名在互联网访问。
+
+---
+
+## 按天采集 + 日期选择（改造方案）
+
+若要将系统改为**每天趋势采集并保存**，并在列表页/详情页支持**选择日期查看对应日期的趋势**，需做以下修改。
+
+### 目标行为
+
+- **采集**：爬虫每天跑一次（或多次），以「当天日期」为快照日写入；同一天同一条目只保留一条（upsert），历史多天数据都保留。
+- **列表页**：默认展示「最新有数据的那天」的榜单；提供日期选择（如下拉或日期控件），选某天后展示该天的榜单。
+- **详情页**：进入某条趋势（如某 repo、某产品）后，默认展示该条「最新一天」的数据；提供日期选择，切换后展示该条在所选日期的数据（若该日无此条可 404 或提示）。
+
+### 1. 数据库（Prisma）
+
+- **无需改 schema**。当前各趋势表已有 `snapshotAt` 和 `@@unique([sourceId, externalId, snapshotAt])`，已支持按天多版本存储。
+- 确保爬虫写入时 `snapshotAt` 使用**当天 0 点**（或统一时区的一日），便于「按天」筛选和去重。
+
+### 2. 采集脚本（Python）
+
+涉及：`script/github_trends.py`、`script/toolify_trends.py`、`script/product_hunt_trends.py`、`script/google_trends.py`。
+
+**当前已实现**（仅覆盖采集当天、保留历史）：
+
+- **snapshotAt 取值**：使用「当天 0 点 UTC」`datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)`，同一天多次跑视为同一天快照。
+- **写入方式**：先 **DELETE 仅当天**（`WHERE "sourceId" = %s AND DATE("snapshotAt") = %s`），再 **INSERT** 本次结果；其他日期的数据不删，历史保留。
+- 有详情表的源（Toolify、Product Hunt、Google）：先删「当天」的 detail（通过 trendId 关联），再删当天的 item，再插入。
+
+### 3. 后端 API（`lib/api/trends.ts`）
+
+- **`getTrendListBySource(sourceId, options?)`**
+  - 当**不传** `snapshotAt` 时：先查该数据源下**最大 snapshotAt 的「日期」**（按天），再用该日期的 0 点～24 点过滤列表，使默认列表只展示「最新一天」的数据，避免多天混合、同一 slug 重复。
+  - 当**传入** `snapshotAt`（某天 0 点）时：仅返回该日期的列表（现有逻辑已支持，保持即可）。
+- **新增 `getAvailableSnapshotDates(sourceId, limit?)`**  
+  返回该数据源在库中有数据的**日期列表**（如 `Date[]` 或 ISO 日期字符串），用于列表页/详情页的日期选择器（如最近 30 天）。
+- **`getTrendBySourceAndSlug(sourceId, slug, options?)`**
+  - 增加可选参数 `options?.snapshotAt?: Date`。若传入，则查询 `sourceId + slug + 该 snapshotAt 所在天` 的那一条；不传则保持现有逻辑（按 `slug` + `orderBy: snapshotAt desc` 取最新一条）。
+- **可选：`getAvailableDatesForSlug(sourceId, slug)`**  
+  返回某条趋势（slug）在库中有数据的日期列表，用于详情页「仅可选该条有数据的日期」；若实现复杂，可先用「数据源可用日期」列表，选到某天无该条时再 404 或提示。
+
+### 4. 列表页（`app/trends/[sourceId]/page.tsx`）
+
+- 从 `searchParams` 读取 `date`（如 `yyyy-mm-dd`），可选。
+- 若有 `date`：转成 `Date`（当天 0 点）传给 `getTrendListBySource(source.id, { snapshotAt, limit: 100 })`。
+- 若无 `date`：不传 `snapshotAt`，由 API 内部用「最新有数据日期」过滤（见上）。
+- 在页面上增加**日期选择**组件（下拉或 `<input type="date">`）：
+  - 选项来自 `getAvailableSnapshotDates(source.id)`（或前端请求一个返回日期列表的 API）。
+  - 选择后跳转到当前列表页并带上 `?date=yyyy-mm-dd`（保留现有 `lang` 等参数）。
+- 列表表格旁可展示当前查看的日期（如「2025-03-06 的榜单」）。
+
+### 5. 详情页（`app/trends/[sourceId]/[id]/page.tsx`）
+
+- 从 `searchParams` 读取 `date`（如 `yyyy-mm-dd`），可选。
+- 调用 `getTrendBySourceAndSlug(source.id, id, { snapshotAt: date ? 当天 0 点 : undefined })`，若有 `date` 则查该日期的该条，否则查最新一条。
+- 在页面上增加**日期选择**控件（下拉或按钮组）：
+  - 选项可为「该数据源可用日期」或「该 slug 可用日期」；默认选中当前展示数据对应的日期。
+  - 点击某日期后跳转到当前详情页并带上 `?date=yyyy-mm-dd`（保留 `lang`），重新拉取该日期的详情。
+- 若所选日期在该 slug 下无数据：返回 404 或展示「该日无此条」的提示。
+
+### 6. 路由与 URL
+
+- 列表页：`/trends/[sourceId]?date=yyyy-mm-dd`、`?lang=zh` 等保持兼容。
+- 详情页：`/trends/[sourceId]/[id]?date=yyyy-mm-dd`、`?lang=zh` 等保持兼容。
+- SEO：canonical 可继续用「无 date 的 URL」表示默认（最新）；带 `date` 的 URL 视为同一页面的参数化视图，按需在 sitemap 中只包含默认 URL 或也包含近期日期（视需求而定）。
+
+### 7. 小结表
+
+| 模块 | 修改内容 |
+|------|----------|
+| Prisma schema | 无需修改 |
+| 各采集脚本 | snapshotAt 用当天 0 点；写入改为 upsert，保留历史 |
+| `lib/api/trends.ts` | 列表默认「最新一天」；新增可用日期 API；详情支持按 snapshotAt 查询 |
+| 列表页 | 读 `date` 参数；调 API 时传 snapshotAt；增加日期选择组件 |
+| 详情页 | 读 `date` 参数；调 API 时传 snapshotAt；增加日期选择组件 |
+
+按上述顺序实施即可实现「每天趋势采集并保存」和「列表/详情页按日期查看」。
 
 ---
 

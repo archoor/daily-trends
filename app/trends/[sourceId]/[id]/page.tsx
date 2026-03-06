@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
-import { getDataSourceBySlug, getTrendBySourceAndSlug } from "@/lib/api/trends";
+import { getDataSourceBySlug, getTrendBySourceAndSlug, getAvailableSnapshotDates } from "@/lib/api/trends";
 import { getSourceBySlug } from "@/config/sources";
+import { DateSelectBar } from "@/components/DateSelectBar";
 import { parseTags } from "@/lib/types/trend";
 import type {
   GitHubTrendItemDto,
@@ -12,7 +13,7 @@ import { absoluteUrl, buildArticleJsonLd } from "@/lib/seo";
 
 interface PageProps {
   params: Promise<{ sourceId: string; id: string }>;
-  searchParams?: Promise<{ lang?: string }>;
+  searchParams?: Promise<{ lang?: string; date?: string }>;
 }
 
 /**
@@ -37,8 +38,20 @@ export default async function TrendDetailPage({
   const source = await getDataSourceBySlug(sourceId);
   if (!source) notFound();
 
-  const trend = await getTrendBySourceAndSlug(source.id, id);
+  const snapshotAt = sp.date ? new Date(sp.date + "T00:00:00.000Z") : undefined;
+  const trend = await getTrendBySourceAndSlug(source.id, id, { snapshotAt });
   if (!trend) notFound();
+
+  const availableDates = await getAvailableSnapshotDates(source.id, 50);
+
+  /** 返回列表链接保留 date 与 lang */
+  const listHref = (() => {
+    const params = new URLSearchParams();
+    if (sp.date) params.set("date", sp.date);
+    if (isZh) params.set("lang", "zh");
+    const q = params.toString();
+    return `/trends/${sourceId}${q ? `?${q}` : ""}`;
+  })();
 
   const isGitHub = sourceId === "github";
   const isProductHunt = sourceId === "producthunt";
@@ -97,8 +110,16 @@ export default async function TrendDetailPage({
         }. Data from Daily Trends.`;
     return (
       <article aria-labelledby="detail-title">
+        {availableDates.length > 0 && (
+          <DateSelectBar
+            dates={availableDates}
+            currentDate={sp.date ?? trend.snapshotAt.slice(0, 10)}
+            basePath={`/trends/${sourceId}/${id}`}
+            lang={isZh ? "zh" : "en"}
+          />
+        )}
         <p className="detail-back">
-          <a href={`/trends/${sourceId}${isZh ? "?lang=zh" : ""}`}>
+          <a href={listHref}>
             ← {config.name}
           </a>
         </p>
@@ -213,8 +234,16 @@ export default async function TrendDetailPage({
         } Data from Daily Trends.`;
     return (
       <article aria-labelledby="detail-title">
+        {availableDates.length > 0 && (
+          <DateSelectBar
+            dates={availableDates}
+            currentDate={sp.date ?? t.snapshotAt.slice(0, 10)}
+            basePath={`/trends/${sourceId}/${id}`}
+            lang={isZh ? "zh" : "en"}
+          />
+        )}
         <p className="detail-back">
-          <a href={`/trends/${sourceId}${isZh ? "?lang=zh" : ""}`}>
+          <a href={listHref}>
             ← {config.name}
           </a>
         </p>
@@ -324,8 +353,16 @@ export default async function TrendDetailPage({
         } Data from Daily Trends.`;
     return (
       <article aria-labelledby="detail-title">
+        {availableDates.length > 0 && (
+          <DateSelectBar
+            dates={availableDates}
+            currentDate={sp.date ?? t.snapshotAt.slice(0, 10)}
+            basePath={`/trends/${sourceId}/${id}`}
+            lang={isZh ? "zh" : "en"}
+          />
+        )}
         <p className="detail-back">
-          <a href={`/trends/${sourceId}${isZh ? "?lang=zh" : ""}`}>
+          <a href={listHref}>
             ← {config.name}
           </a>
         </p>
@@ -445,8 +482,16 @@ export default async function TrendDetailPage({
 
   return (
     <article aria-labelledby="detail-title">
+      {availableDates.length > 0 && (
+        <DateSelectBar
+          dates={availableDates}
+          currentDate={sp.date ?? trend.snapshotAt.slice(0, 10)}
+          basePath={`/trends/${sourceId}/${id}`}
+          lang={isZh ? "zh" : "en"}
+        />
+      )}
       <p className="detail-back">
-        <a href={`/trends/${sourceId}${isZh ? "?lang=zh" : ""}`}>
+        <a href={listHref}>
           ← {config.name}
         </a>
       </p>

@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getDataSourceBySlug, getTrendListBySource } from "@/lib/api/trends";
+import { getDataSourceBySlug, getTrendListBySource, getAvailableSnapshotDates, getSourceSummaryForDate } from "@/lib/api/trends";
 import { getSourceBySlug } from "@/config/sources";
+import { DateSelectBar } from "@/components/DateSelectBar";
 import type {
   TrendItemDto,
   GitHubTrendItemDto,
@@ -36,7 +37,7 @@ function rankMedalClass(rank: number | null): string {
 
 interface PageProps {
   params: Promise<{ sourceId: string }>;
-  searchParams?: Promise<{ lang?: string }>;
+  searchParams?: Promise<{ lang?: string; date?: string }>;
 }
 
 /**
@@ -55,20 +56,38 @@ export default async function TrendListPage({
   if (!config) notFound();
 
   const source = await getDataSourceBySlug(sourceId);
+  const snapshotAt = sp.date
+    ? new Date(sp.date + "T00:00:00.000Z")
+    : undefined;
   const list = source
-    ? await getTrendListBySource(source.id, { limit: 100 })
+    ? await getTrendListBySource(source.id, { snapshotAt, limit: 100 })
     : [];
+  const availableDates = source ? await getAvailableSnapshotDates(source.id, 50) : [];
+  const dailySummary = source ? await getSourceSummaryForDate(source.id, sp.date ?? null) : null;
+
+  /** 详情链接保留当前 date 与 lang */
+  const detailHref = (slug: string) => {
+    const params = new URLSearchParams();
+    if (sp.date) params.set("date", sp.date);
+    if (isZh) params.set("lang", "zh");
+    const q = params.toString();
+    return `/trends/${sourceId}/${slug}${q ? `?${q}` : ""}`;
+  };
 
   const isGitHub = sourceId === "github";
   const isProductHunt = sourceId === "producthunt";
   const isGoogle = sourceId === "google";
 
+  const hasDailySummary =
+    dailySummary &&
+    (dailySummary.description != null && dailySummary.description !== "" ||
+     dailySummary.descriptionZh != null && dailySummary.descriptionZh !== "");
   const rawSummary =
-    source
-      ? isZh && (source as any).descriptionZh
-        ? (source as any).descriptionZh
-        : source.description
-      : config.description;
+    hasDailySummary
+      ? (isZh && dailySummary!.descriptionZh ? dailySummary!.descriptionZh : dailySummary!.description)
+      : sp.date
+        ? null
+        : (source ? (isZh && (source as any).descriptionZh ? (source as any).descriptionZh : source.description) : null) ?? config.description;
   const summaryParagraphs =
     typeof rawSummary === "string"
       ? rawSummary
@@ -76,6 +95,7 @@ export default async function TrendListPage({
           .map((p) => p.trim())
           .filter(Boolean)
       : [];
+  const noSummaryForDate = sp.date && !hasDailySummary;
 
   const listUrl = absoluteUrl(`/trends/${sourceId}${isZh ? "?lang=zh" : ""}`);
   const itemListJsonLd = buildItemListJsonLd({
@@ -115,6 +135,7 @@ export default async function TrendListPage({
   const texts = {
     subtitle: isZh ? "每日趋势榜单" : "Daily Trends Rankings",
     titlePrefix: isZh ? `${config.name} 热门趋势` : `Top ${config.name} Rankings`,
+    noSummaryForDate: isZh ? "该日暂无存档总结。" : "No summary archived for this date.",
     fallbackDesc: isZh
       ? "趋势列表。数据由外部爬虫写入数据库，本页面仅负责展示。"
       : "Trend list. Data is written by external crawlers; this page only displays it.",
@@ -125,8 +146,8 @@ export default async function TrendListPage({
       ? ["排行", "趋势名称", "搜索量", "已开始", "结束时间", "趋势细分"]
       : ["Rank", "Trend name", "Search volume", "Started", "Ended", "Related"],
     productHuntHeaders: isZh
-      ? ["排行", "图标", "产品名", "描述", "类别", "评论数", "点赞数"]
-      : ["Rank", "Icon", "Product", "Description", "Category", "Comments", "Upvotes"],
+      ? ["排行", "产品名", "描述", "类别", "评论数", "点赞数"]
+      : ["Rank", "Product", "Description", "Category", "Comments", "Upvotes"],
     githubHeaders: isZh
       ? ["排行", "仓库", "描述", "语言", "星标", "Fork", "今日新增星标", "增长率"]
       : ["Rank", "Repo", "Description", "Language", "Stars", "Fork", "Stars today", "Growth"],
@@ -142,6 +163,15 @@ export default async function TrendListPage({
 
   return (
     <article aria-label={isZh ? `${config.name} 趋势` : `${config.name} trends`}>
+      {/* 日期选择条：平铺在页面最上方（菜单下方） */}
+      {availableDates.length > 0 && (
+        <DateSelectBar
+          dates={availableDates}
+          currentDate={sp.date ?? null}
+          basePath={`/trends/${sourceId}`}
+          lang={isZh ? "zh" : "en"}
+        />
+      )}
       {/* 页面标题区 */}
       <section className="page-title-section" aria-labelledby="list-title">
         <p className="subtitle" id="list-subtitle">
@@ -154,7 +184,7 @@ export default async function TrendListPage({
           summaryParagraphs.map(renderSummaryParagraph)
         ) : (
           <p className="description">
-            {config.description ?? texts.fallbackDesc}
+            {noSummaryForDate ? texts.noSummaryForDate : (config.description ?? texts.fallbackDesc)}
           </p>
         )}
       </section>
@@ -195,7 +225,7 @@ export default async function TrendListPage({
                           <span className={rankMedalClass(item.rank)}>{item.rank ?? "—"}</span>
                         </td>
                         <td className="col-name">
-                          <Link href={`/trends/${sourceId}/${item.slug}`}>{item.name}</Link>
+                          <Link href={detailHref(item.slug)}>{item.name}</Link>
                         </td>
                         <td>
                           {item.searchVolumeDisplay ?? (item.searchVolume != null ? item.searchVolume.toLocaleString() + "+" : "—")}
@@ -233,7 +263,6 @@ export default async function TrendListPage({
                     <th>{texts.productHuntHeaders[3]}</th>
                     <th>{texts.productHuntHeaders[4]}</th>
                     <th>{texts.productHuntHeaders[5]}</th>
-                    <th>{texts.productHuntHeaders[6]}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -242,15 +271,8 @@ export default async function TrendListPage({
                       <td className="col-rank">
                         <span className={rankMedalClass(item.rank)}>{item.rank ?? "—"}</span>
                       </td>
-                      <td>
-                        {item.iconUrl ? (
-                          <img src={item.iconUrl} alt="" width={40} height={40} style={{ borderRadius: "6px", objectFit: "cover" }} />
-                        ) : (
-                          <span style={{ color: "var(--color-text-light)" }}>—</span>
-                        )}
-                      </td>
                       <td className="col-name">
-                        <Link href={`/trends/${sourceId}/${item.slug}`}>{item.name}</Link>
+                        <Link href={detailHref(item.slug)}>{item.name}</Link>
                       </td>
                       <td className="col-desc">{item.description ?? "—"}</td>
                       <td className="col-tags">{item.categories ?? "—"}</td>
@@ -285,7 +307,7 @@ export default async function TrendListPage({
                           <span className={rankMedalClass(item.rank)}>{item.rank ?? "—"}</span>
                         </td>
                         <td className="col-name">
-                          <Link href={`/trends/${sourceId}/${item.slug}`}>{item.repoFullName}</Link>
+                          <Link href={detailHref(item.slug)}>{item.repoFullName}</Link>
                         </td>
                         <td className="col-desc">{item.description ?? "—"}</td>
                         <td>{item.language ?? "—"}</td>
@@ -293,7 +315,7 @@ export default async function TrendListPage({
                         <td>{item.forks.toLocaleString()}</td>
                         <td>
                           {item.starsToday > 0
-                            ? texts.starsToday(item.starsToday)
+                            ? item.starsToday.toLocaleString()
                             : "—"}
                         </td>
                         <td>
@@ -326,7 +348,7 @@ export default async function TrendListPage({
                           <span className={rankMedalClass(item.rank)}>{item.rank ?? "—"}</span>
                         </td>
                         <td className="col-name">
-                          <Link href={`/trends/${sourceId}/${item.slug}`}>{item.name}</Link>
+                          <Link href={detailHref(item.slug)}>{item.name}</Link>
                         </td>
                         <td>{item.monthlyVisits != null ? item.monthlyVisits.toLocaleString() : "—"}</td>
                         <td>

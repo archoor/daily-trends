@@ -108,13 +108,17 @@ def _get_or_create_product_hunt_source_id(conn: "psycopg.Connection") -> str:
         return source_id
 
 
+def _today_utc() -> datetime:
+    """采集当天 0 点 UTC，用于 snapshotAt 与「仅删当天」逻辑。"""
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def _map_products_to_rows(
-    source_id: str, products: List[Dict]
+    source_id: str, products: List[Dict], snapshot_at: datetime
 ) -> List[Tuple]:
     """
     将采集结果映射为 product_hunt_trend_item 的插入行。
     """
-    snapshot_at = datetime.now(timezone.utc)
     snapshot_iso = _dt_to_iso(snapshot_at)
     now_iso = snapshot_iso
 
@@ -215,10 +219,10 @@ def ingest_product_hunt_today() -> None:
     主入口：
     1) 调用 product_hunt_firecrawl 抓取 Product Hunt 首页今日产品列表；
     2) 解析为结构化列表；
-    3) 写入 SQLite 的 product_hunt_trend_item 表。
+    3) 写入 Postgres 的 product_hunt_trend_item 表。
 
-    当前策略：每次采集前清空 product_hunt_trend_detail 与 product_hunt_trend_item 表，
-    再插入本次抓取结果（全量覆盖，不区分 sourceId）。
+    策略：仅覆盖「采集当天」的数据（先删当天 item + 关联 detail，再插入），保留历史日期。
+    snapshotAt 使用当天 0 点 UTC。
     """
     conn = _get_pg_conn_from_env()
 
@@ -230,7 +234,8 @@ def ingest_product_hunt_today() -> None:
             print("[product_hunt] 未解析到任何产品，跳过入库。")
             return
 
-        rows = _map_products_to_rows(source_id, products)
+        snapshot_at = _today_utc()
+        rows = _map_products_to_rows(source_id, products, snapshot_at)
 
         # 生成 Product Hunt 今日榜单的整页中英文总结，写入 data_source.description / descriptionZh
         try:
@@ -247,11 +252,22 @@ def ingest_product_hunt_today() -> None:
             summary_zh = None
 
         with conn.cursor() as cur:
-            # 全量覆盖：先删详情表（避免外键约束），再清空列表表
+            # 仅删除「采集当天」的列表与关联详情，保留历史日期
+            today_date = snapshot_at.date()
             cur.execute(
-                'DELETE FROM product_hunt_trend_detail WHERE "trendId" IN (SELECT id FROM product_hunt_trend_item)'
+                """
+                DELETE FROM product_hunt_trend_detail
+                WHERE "trendId" IN (
+                    SELECT id FROM product_hunt_trend_item
+                    WHERE "sourceId" = %s AND DATE("snapshotAt") = %s
+                )
+                """,
+                (source_id, today_date),
             )
-            cur.execute("DELETE FROM product_hunt_trend_item")
+            cur.execute(
+                'DELETE FROM product_hunt_trend_item WHERE "sourceId" = %s AND DATE("snapshotAt") = %s',
+                (source_id, today_date),
+            )
 
             insert_sql = """
             INSERT INTO product_hunt_trend_item (
@@ -265,6 +281,7 @@ def ingest_product_hunt_today() -> None:
 
             if summary_en or summary_zh:
                 now_iso = _dt_to_iso(datetime.now(timezone.utc))
+                today_ymd = snapshot_at.date().isoformat()
                 cur.execute(
                     """
                     UPDATE data_source
@@ -274,6 +291,17 @@ def ingest_product_hunt_today() -> None:
                     WHERE id = %s
                     """,
                     (summary_en, summary_zh, now_iso, source_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO source_daily_summary (id, "sourceId", "snapshotDate", description, "descriptionZh", "createdAt", "updatedAt")
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT ("sourceId", "snapshotDate") DO UPDATE SET
+                        description = EXCLUDED.description,
+                        "descriptionZh" = EXCLUDED."descriptionZh",
+                        "updatedAt" = EXCLUDED."updatedAt"
+                    """,
+                    (uuid4().hex, source_id, today_ymd, summary_en, summary_zh, now_iso, now_iso),
                 )
         conn.commit()
 

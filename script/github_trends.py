@@ -177,18 +177,48 @@ def _fetch_github_trending(
         # 星标与 Fork
         stars = 0
         forks = 0
+        # 1) 优先根据链接 href 判断 stargazers / forks / network 成员
         for link in article.find_all("a", href=True):
             href_val = link["href"]
-            if href_val.endswith("/stargazers"):
+            if href_val.endswith("/stargazers") or "/stargazers?" in href_val:
                 stars = _parse_int_from_text(link.get_text())
-            elif "/network/members" in href_val:
+            elif (
+                "/network/members" in href_val
+                or href_val.endswith("/forks")
+                or "/forks?" in href_val
+            ):
                 forks = _parse_int_from_text(link.get_text())
+
+        # 2) 若仍未识别到 Fork 数，尝试从整条卡片文本中模糊匹配 “123 forks”
+        if forks == 0:
+            full_text_for_forks = " ".join(article.stripped_strings)
+            m_forks = re.search(
+                r"(\d[\d,]*)\s+forks?",
+                full_text_for_forks,
+                flags=re.IGNORECASE,
+            )
+            if m_forks:
+                forks = _parse_int_from_text(m_forks.group(1))
 
         # 今日/本周/本月新增星标
         stars_today = 0
-        stars_today_span = article.find("span", string=re.compile(r"stars? (today|this week|this month)"))
+        # 优先尝试按 span 文本精确匹配（兼容旧结构）
+        stars_today_span = article.find(
+            "span",
+            string=re.compile(r"stars? (today|this week|this month)", re.IGNORECASE),
+        )
         if stars_today_span:
             stars_today = _parse_int_from_text(stars_today_span.get_text())
+        else:
+            # 兼容 GitHub DOM 变更：从整条卡片文本中模糊匹配 “123 stars today/this week/this month”
+            full_text = " ".join(article.stripped_strings)
+            m = re.search(
+                r"(\d[\d,]*)\s+stars?\s+(today|this week|this month)",
+                full_text,
+                flags=re.IGNORECASE,
+            )
+            if m:
+                stars_today = _parse_int_from_text(m.group(1))
 
         # Built by 头像（仅保存头像 URL 列表）
         built_by_avatars: List[str] = []
@@ -287,20 +317,26 @@ def _build_github_page_context(items: List[Dict[str, Any]], date_range: str) -> 
     return "\n".join(lines)
 
 
+def _today_utc() -> datetime:
+    """采集当天 0 点 UTC，用于 snapshotAt 与「仅删当天」逻辑。"""
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def ingest_github_trends(
     *, date_range: str = "today", language: Optional[str] = None
 ) -> None:
     """
     抓取 GitHub Trending Repositories 并写入 github_trend_item 表（Postgres）。
 
-    策略：按数据源 + dateRange 覆盖写入（先删后插），不保留历史快照。
+    策略：仅覆盖「采集当天」的数据（DELETE 当天 + INSERT），保留历史日期数据。
+    snapshotAt 使用当天 0 点 UTC。
     """
     conn = _get_pg_conn_from_env()
     try:
         source_id = _get_or_create_github_source_id(conn)
 
         trending_items = _fetch_github_trending(date_range=date_range, language=language)
-        snapshot_at = datetime.now(timezone.utc)
+        snapshot_at = _today_utc()
         rows = _map_trending_to_rows(source_id, trending_items, snapshot_at)
 
         # 生成本次 GitHub Trending 页的中英文整体总结，写入 data_source.description / descriptionZh
@@ -318,10 +354,11 @@ def ingest_github_trends(
             summary_zh = None
 
         with conn.cursor() as cur:
-            # 仅删除当前 date_range 的旧数据，支持同时保留 today/weekly/monthly 不同快照
+            # 仅删除「采集当天」的旧数据，保留历史日期
+            today_date = snapshot_at.date()
             cur.execute(
-                'DELETE FROM github_trend_item WHERE "sourceId" = %s AND "dateRange" = %s',
-                (source_id, date_range),
+                'DELETE FROM github_trend_item WHERE "sourceId" = %s AND DATE("snapshotAt") = %s',
+                (source_id, today_date),
             )
 
             insert_sql = """
@@ -336,6 +373,7 @@ def ingest_github_trends(
 
             if summary_en or summary_zh:
                 now_iso = _dt_to_iso(datetime.now(timezone.utc))
+                today_ymd = snapshot_at.date().isoformat()
                 cur.execute(
                     """
                     UPDATE data_source
@@ -345,6 +383,17 @@ def ingest_github_trends(
                     WHERE id = %s
                     """,
                     (summary_en, summary_zh, now_iso, source_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO source_daily_summary (id, "sourceId", "snapshotDate", description, "descriptionZh", "createdAt", "updatedAt")
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT ("sourceId", "snapshotDate") DO UPDATE SET
+                        description = EXCLUDED.description,
+                        "descriptionZh" = EXCLUDED."descriptionZh",
+                        "updatedAt" = EXCLUDED."updatedAt"
+                    """,
+                    (uuid4().hex, source_id, today_ymd, summary_en, summary_zh, now_iso, now_iso),
                 )
         conn.commit()
 
