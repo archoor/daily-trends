@@ -221,26 +221,26 @@ export default async function TrendListPage({
                     const endedLabel = item.endedAt != null ? formatStartedAt(item.endedAt) : "—";
                     return (
                       <tr key={item.id}>
-                        <td className="col-rank">
+                        <td className="col-rank" data-label={texts.googleHeaders[0]}>
                           <span className={rankMedalClass(item.rank)}>{item.rank ?? "—"}</span>
                         </td>
-                        <td className="col-name">
+                        <td className="col-name" data-label={texts.googleHeaders[1]}>
                           <Link href={detailHref(item.slug)}>{item.name}</Link>
                         </td>
-                        <td>
+                        <td data-label={texts.googleHeaders[2]}>
                           {item.searchVolumeDisplay ?? (item.searchVolume != null ? item.searchVolume.toLocaleString() + "+" : "—")}
                           {item.growthRate != null && (
                             <span className="growth-up"> ↑{item.growthRate}%</span>
                           )}
                         </td>
-                        <td>
+                        <td data-label={texts.googleHeaders[3]}>
                           {startedLabel}
                           {item.isActive && (
                             <span className="growth-up"> {texts.active}</span>
                           )}
                         </td>
-                        <td>{endedLabel}</td>
-                        <td className="col-desc">
+                        <td data-label={texts.googleHeaders[4]}>{endedLabel}</td>
+                        <td className="col-desc" data-label={texts.googleHeaders[5]}>
                           {keywords.length > 0 ? keywords.join(" · ") : "—"}
                           {item.moreRelatedCount != null && item.moreRelatedCount > 0 && (
                             <span style={{ display: "block", marginTop: "0.125rem" }}>
@@ -268,16 +268,16 @@ export default async function TrendListPage({
                 <tbody>
                   {(list as ProductHuntTrendItemDto[]).map((item) => (
                     <tr key={item.id}>
-                      <td className="col-rank">
+                      <td className="col-rank" data-label={texts.productHuntHeaders[0]}>
                         <span className={rankMedalClass(item.rank)}>{item.rank ?? "—"}</span>
                       </td>
-                      <td className="col-name">
+                      <td className="col-name" data-label={texts.productHuntHeaders[1]}>
                         <Link href={detailHref(item.slug)}>{item.name}</Link>
                       </td>
-                      <td className="col-desc">{item.description ?? "—"}</td>
-                      <td className="col-tags">{item.categories ?? "—"}</td>
-                      <td>{item.commentCount.toLocaleString()}</td>
-                      <td>{item.upvoteCount.toLocaleString()}</td>
+                      <td className="col-desc" data-label={texts.productHuntHeaders[2]}>{item.description ?? "—"}</td>
+                      <td className="col-tags" data-label={texts.productHuntHeaders[3]}>{item.categories ?? "—"}</td>
+                      <td data-label={texts.productHuntHeaders[4]}>{item.commentCount.toLocaleString()}</td>
+                      <td data-label={texts.productHuntHeaders[5]}>{item.upvoteCount.toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -303,22 +303,22 @@ export default async function TrendListPage({
                       : null;
                     return (
                       <tr key={item.id}>
-                        <td className="col-rank">
+                        <td className="col-rank" data-label={texts.githubHeaders[0]}>
                           <span className={rankMedalClass(item.rank)}>{item.rank ?? "—"}</span>
                         </td>
-                        <td className="col-name">
+                        <td className="col-name" data-label={texts.githubHeaders[1]}>
                           <Link href={detailHref(item.slug)}>{item.repoFullName}</Link>
                         </td>
-                        <td className="col-desc">{item.description ?? "—"}</td>
-                        <td>{item.language ?? "—"}</td>
-                        <td>{item.stars.toLocaleString()}</td>
-                        <td>{item.forks.toLocaleString()}</td>
-                        <td>
+                        <td className="col-desc" data-label={texts.githubHeaders[2]}>{item.description ?? "—"}</td>
+                        <td data-label={texts.githubHeaders[3]}>{item.language ?? "—"}</td>
+                        <td data-label={texts.githubHeaders[4]}>{item.stars.toLocaleString()}</td>
+                        <td data-label={texts.githubHeaders[5]}>{item.forks.toLocaleString()}</td>
+                        <td data-label={texts.githubHeaders[6]}>
                           {item.starsToday > 0
                             ? item.starsToday.toLocaleString()
                             : "—"}
                         </td>
-                        <td>
+                        <td data-label={texts.githubHeaders[7]}>
                           {rate != null ? <span className="growth-up">{rate}%</span> : "—"}
                         </td>
                       </tr>
@@ -344,21 +344,21 @@ export default async function TrendListPage({
                     const tagsList = parseTags(item.tags ?? null).slice(0, 6);
                     return (
                       <tr key={item.id}>
-                        <td className="col-rank">
+                        <td className="col-rank" data-label={texts.toolifyHeaders[0]}>
                           <span className={rankMedalClass(item.rank)}>{item.rank ?? "—"}</span>
                         </td>
-                        <td className="col-name">
+                        <td className="col-name" data-label={texts.toolifyHeaders[1]}>
                           <Link href={detailHref(item.slug)}>{item.name}</Link>
                         </td>
-                        <td>{item.monthlyVisits != null ? item.monthlyVisits.toLocaleString() : "—"}</td>
-                        <td>
+                        <td data-label={texts.toolifyHeaders[2]}>{item.monthlyVisits != null ? item.monthlyVisits.toLocaleString() : "—"}</td>
+                        <td data-label={texts.toolifyHeaders[3]}>
                           {item.growthDisplay ? <span className="growth-up">↑{item.growthDisplay}</span> : "—"}
                         </td>
-                        <td>
+                        <td data-label={texts.toolifyHeaders[4]}>
                           {item.growthRate != null ? <span className="growth-up">↑{item.growthRate}%</span> : "—"}
                         </td>
-                        <td className="col-desc">{item.summary ?? "—"}</td>
-                        <td className="col-tags">
+                        <td className="col-desc" data-label={texts.toolifyHeaders[5]}>{item.summary ?? "—"}</td>
+                        <td className="col-tags" data-label={texts.toolifyHeaders[6]}>
                           {tagsList.length > 0 ? (
                             <div className="tag-pills">
                               {tagsList.map((t) => (

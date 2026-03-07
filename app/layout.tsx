@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
@@ -11,6 +11,13 @@ const baseUrl = getBaseUrl();
 const siteName = "Daily Trends";
 const defaultDescription =
   "Multi-source AI and product trends in one place. Rankings from Toolify, GitHub, Product Hunt, and Google Trends.";
+
+/** 移动端适配：视口宽度随设备，便于根据宽度自动切换为手机布局 */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),

@@ -19,6 +19,8 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   --max-width: 1280px;
+  /* 移动端断点：≤768px 视为手机/小平板，自动切换为手机布局 */
+  --mobile-breakpoint: 768px;
 }
 
 * {
@@ -62,8 +64,14 @@ a:hover {
 header {
   background: var(--color-bg);
   border-bottom: 1px solid var(--color-border);
-  padding: 0 1.5rem;
+  padding: 0 1rem;
   margin-bottom: 0;
+}
+
+@media (min-width: 769px) {
+  header {
+    padding: 0 1.5rem;
+  }
 }
 
 .header-inner {
@@ -74,6 +82,64 @@ header {
   min-height: 56px;
   gap: 1.5rem;
   justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+/* 手机端：导航折叠，显示汉堡按钮 */
+@media (max-width: 768px) {
+  .header-inner {
+    gap: 0.75rem;
+    min-height: 52px;
+  }
+
+  .header-nav-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    margin-left: auto;
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--color-text);
+  }
+
+  .header-nav-toggle:hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+
+  .header-nav-toggle[aria-expanded="true"] {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+
+  .nav-links {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.5rem 0 0.75rem;
+    border-top: 1px solid var(--color-border-light);
+    margin-top: 0.25rem;
+  }
+
+  .nav-links.is-open {
+    display: flex;
+  }
+
+  .nav-link {
+    padding: 0.6rem 0.75rem;
+    width: 100%;
+    border-radius: var(--radius);
+  }
+
+  .lang-switch {
+    order: 1;
+  }
 }
 
 .header-logo {
@@ -94,6 +160,11 @@ header {
   width: 24px;
   height: 24px;
   color: var(--color-primary);
+}
+
+/* 桌面端隐藏汉堡按钮 */
+.header-nav-toggle {
+  display: none;
 }
 
 .nav-links {
@@ -175,7 +246,13 @@ header {
 main {
   max-width: var(--max-width);
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 1rem;
+}
+
+@media (min-width: 769px) {
+  main {
+    padding: 1.5rem;
+  }
 }
 
 /* ========== 日期选择条（菜单下方平铺，简洁样式） ========== */
@@ -190,6 +267,20 @@ main {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem;
+}
+
+@media (max-width: 768px) {
+  .date-select-bar {
+    margin-left: -0.25rem;
+    margin-right: -0.25rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .date-select-bar-inner {
+    min-width: min-content;
+    padding-bottom: 0.25rem;
+  }
 }
 
 .date-select-btn {
@@ -259,11 +350,17 @@ main {
 }
 
 .page-title-section .title {
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   font-weight: 700;
   color: var(--color-text);
   margin-bottom: 0.5rem;
   line-height: 1.3;
+}
+
+@media (min-width: 769px) {
+  .page-title-section .title {
+    font-size: 1.5rem;
+  }
 }
 
 .page-title-section .title .highlight {
@@ -405,6 +502,83 @@ main {
   border-bottom: none;
 }
 
+/* 手机端：表格改为卡片式布局，每行一张卡片 */
+@media (max-width: 768px) {
+  .table-wrap {
+    margin-left: -0.5rem;
+    margin-right: -0.5rem;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+
+  .data-table thead {
+    display: none;
+  }
+
+  .data-table tbody tr {
+    display: block;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    margin-bottom: 0.75rem;
+    padding: 0.75rem;
+    background: var(--color-bg);
+  }
+
+  .data-table tbody tr:hover {
+    background: var(--color-bg);
+  }
+
+  .data-table tbody tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .data-table tbody td {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--color-border-light);
+  }
+
+  .data-table tbody td:last-child {
+    border-bottom: none;
+  }
+
+  .data-table tbody td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-weight: 600;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    min-width: 4.5em;
+  }
+
+  .data-table .col-rank {
+    width: auto;
+    text-align: left;
+    padding-top: 0;
+    padding-bottom: 0.5rem;
+    border-bottom: none;
+  }
+
+  .data-table .col-rank::before {
+    display: none;
+  }
+
+  .data-table tbody tr td.col-name {
+    padding-top: 0.25rem;
+  }
+
+  .data-table .col-name {
+    font-weight: 500;
+  }
+
+  .data-table .col-name a {
+    word-break: break-word;
+  }
+}
+
 .data-table .col-rank {
   width: 56px;
   text-align: center;
@@ -481,8 +655,15 @@ main {
 
 .source-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 1rem;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 480px) {
+  .source-cards {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
+  }
 }
 
 .source-card {
@@ -556,6 +737,21 @@ main {
   gap: 0.5rem 1rem;
   grid-template-columns: auto 1fr;
   font-size: 0.875rem;
+}
+
+@media (max-width: 768px) {
+  .detail-dl {
+    grid-template-columns: 1fr;
+    gap: 0.25rem 0;
+  }
+
+  .detail-dl dt {
+    margin-top: 0.5rem;
+  }
+
+  .detail-dl dt:first-child {
+    margin-top: 0;
+  }
 }
 
 .detail-dl dt {
