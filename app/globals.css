@@ -93,7 +93,7 @@ header {
   flex-wrap: wrap;
 }
 
-/* 手机端：顶栏单行不堆叠（Logo 左 + 语言+汉堡 右），展开的菜单整行在下方 */
+/* 手机端：顶栏仅 Logo + 右上角汉堡按钮；抽屉从右侧滑出，右上角×关闭，最下角中英文 */
 @media (max-width: 768px) {
   .header-inner {
     gap: 0.5rem 0;
@@ -108,6 +108,11 @@ header {
   .header-inner .header-right {
     margin-left: auto;
     flex-shrink: 0;
+  }
+
+  /* 顶栏不显示语言，语言移入抽屉底部 */
+  .header-lang {
+    display: none;
   }
 
   .header-nav-toggle {
@@ -134,26 +139,105 @@ header {
     color: var(--color-primary);
   }
 
+  /* 抽屉：默认隐藏，展开时为右侧固定面板 */
   .nav-links {
     display: none;
-    width: 100%;
-    flex-basis: 100%;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 85%;
+    max-width: 320px;
+    z-index: 1001;
+    background: var(--color-bg);
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.12);
     flex-direction: column;
-    gap: 0.25rem;
-    padding: 0.5rem 0 0.75rem;
-    border-top: 1px solid var(--color-border-light);
-    margin-top: 0.25rem;
+    gap: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    border-left: 1px solid var(--color-border);
   }
 
   .nav-links.is-open {
     display: flex;
   }
 
+  /* 抽屉右上角关闭 × 按钮 */
+  .nav-drawer-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: flex-end;
+    width: 48px;
+    height: 48px;
+    margin: 0.25rem 0.25rem 0 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--color-primary);
+  }
+
+  .nav-drawer-close:hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary-hover);
+  }
+
+  .nav-drawer-links {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 1rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
   .nav-link {
-    padding: 0.6rem 0.75rem;
+    padding: 0.75rem 1rem;
     width: 100%;
     border-radius: var(--radius);
+    border-bottom: 1px solid var(--color-border-light);
   }
+
+  .nav-link:last-child {
+    border-bottom: none;
+  }
+
+  /* 抽屉最下角：中英文选择 */
+  .nav-drawer-footer {
+    flex-shrink: 0;
+    padding: 1rem 1rem 1.25rem;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg-subtle);
+  }
+
+  .nav-drawer-footer .lang-switch {
+    display: flex;
+    gap: 0.25rem;
+  }
+}
+
+/* 桌面端：抽屉关闭按钮与底部语言不显示 */
+@media (min-width: 769px) {
+  .nav-drawer-close,
+  .nav-drawer-footer {
+    display: none;
+  }
+
+  .nav-drawer-links {
+    display: contents;
+  }
+}
+
+/* 抽屉遮罩层 */
+.nav-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.35);
+  cursor: pointer;
 }
 
 .header-logo {

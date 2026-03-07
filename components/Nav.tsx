@@ -5,9 +5,11 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { SOURCE_CONFIGS } from "@/config/sources";
 
+const closeLabel = { en: "Close menu", zh: "关闭菜单" };
+
 /**
  * 全局导航：Logo + 数据源菜单
- * 手机端（≤768px）：自动折叠为汉堡菜单，点击展开/收起
+ * 手机端（≤768px）：顶栏仅 Logo + 右上角汉堡按钮；点击后右侧滑出抽屉，内含趋势选单、右上角×关闭、最下角中英文切换
  */
 export function Nav() {
   const pathname = usePathname();
@@ -34,84 +36,117 @@ export function Nav() {
     router.push(href);
   };
 
+  const closeMenu = () => setMenuOpen(false);
+
   const t = {
     home: currentLang === "zh" ? "首页" : "Home",
     trendsLabel: currentLang === "zh" ? "趋势列表" : "Trends",
     langEn: "EN",
     langZh: "中文",
+    close: currentLang === "zh" ? closeLabel.zh : closeLabel.en,
   };
 
+  const langButtons = (
+    <>
+      <button
+        type="button"
+        className={currentLang === "en" ? "lang-btn active" : "lang-btn"}
+        onClick={() => setLang("en")}
+      >
+        {t.langEn}
+      </button>
+      <button
+        type="button"
+        className={currentLang === "zh" ? "lang-btn active" : "lang-btn"}
+        onClick={() => setLang("zh")}
+      >
+        {t.langZh}
+      </button>
+    </>
+  );
+
   return (
-    <div className="header-inner">
-      <Link href="/" className="header-logo" aria-label="Daily Trends Home">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5z" />
-          <path d="M2 17l10 5 10-5" />
-        </svg>
-        Daily Trends
-      </Link>
-      <div className="header-right">
-        <div className="lang-switch" aria-label="Language switch">
+    <>
+      <div className="header-inner">
+        <Link href="/" className="header-logo" aria-label="Daily Trends Home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+          </svg>
+          Daily Trends
+        </Link>
+        <div className="header-right">
+          <div className="lang-switch header-lang" aria-label="Language switch">
+            {langButtons}
+          </div>
           <button
             type="button"
-            className={
-              currentLang === "en" ? "lang-btn active" : "lang-btn"
-            }
-            onClick={() => setLang("en")}
+            className="header-nav-toggle"
+            aria-expanded={menuOpen}
+            aria-label={menuOpen ? t.close : (currentLang === "zh" ? "打开菜单" : "Open menu")}
+            onClick={() => setMenuOpen((o) => !o)}
           >
-            {t.langEn}
-          </button>
-          <button
-            type="button"
-            className={
-              currentLang === "zh" ? "lang-btn active" : "lang-btn"
-            }
-            onClick={() => setLang("zh")}
-          >
-            {t.langZh}
+            {menuOpen ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <path d="M3 12h18M3 6h18M3 18h18" />
+              </svg>
+            )}
           </button>
         </div>
-        <button
-          type="button"
-          className="header-nav-toggle"
-          aria-expanded={menuOpen}
-          aria-label={menuOpen ? (currentLang === "zh" ? "关闭菜单" : "Close menu") : (currentLang === "zh" ? "打开菜单" : "Open menu")}
-          onClick={() => setMenuOpen((o) => !o)}
-        >
-          {menuOpen ? (
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+        <nav className={`nav-links ${menuOpen ? "is-open" : ""}`} aria-label={t.trendsLabel}>
+          <button
+            type="button"
+            className="nav-drawer-close"
+            aria-label={t.close}
+            onClick={closeMenu}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
-          ) : (
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-              <path d="M3 12h18M3 6h18M3 18h18" />
-            </svg>
-          )}
-        </button>
-      </div>
-      <nav className={`nav-links ${menuOpen ? "is-open" : ""}`} aria-label={t.trendsLabel}>
-        <Link
-          href={currentLang === "zh" ? "/?lang=zh" : "/"}
-          className={pathname === "/" ? "nav-link active" : "nav-link"}
-        >
-          {t.home}
-        </Link>
-        {SOURCE_CONFIGS.map((s) => {
-          const href = `/trends/${s.slug}`;
-          const hrefWithLang = currentLang === "zh" ? `${href}?lang=zh` : href;
-          const isActive =
-            pathname === href || pathname.startsWith(href + "/");
-          return (
+          </button>
+          <div className="nav-drawer-links">
             <Link
-              key={s.slug}
-              href={hrefWithLang}
-              className={isActive ? "nav-link active" : "nav-link"}
+              href={currentLang === "zh" ? "/?lang=zh" : "/"}
+              className={pathname === "/" ? "nav-link active" : "nav-link"}
+              onClick={closeMenu}
             >
-              {s.name}
+              {t.home}
             </Link>
-          );
-        })}
-      </nav>
-    </div>
+            {SOURCE_CONFIGS.map((s) => {
+              const href = `/trends/${s.slug}`;
+              const hrefWithLang = currentLang === "zh" ? `${href}?lang=zh` : href;
+              const isActive =
+                pathname === href || pathname.startsWith(href + "/");
+              return (
+                <Link
+                  key={s.slug}
+                  href={hrefWithLang}
+                  className={isActive ? "nav-link active" : "nav-link"}
+                  onClick={closeMenu}
+                >
+                  {s.name}
+                </Link>
+              );
+            })}
+          </div>
+          <div className="nav-drawer-footer" aria-label="Language switch">
+            <div className="lang-switch">
+              {langButtons}
+            </div>
+          </div>
+        </nav>
+      </div>
+      {menuOpen && (
+        <div
+          className="nav-drawer-backdrop"
+          aria-hidden
+          onClick={closeMenu}
+        />
+      )}
+    </>
   );
 }
