@@ -2,7 +2,7 @@ import json
 import os
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -354,11 +354,12 @@ def ingest_github_trends(
             summary_zh = None
 
         with conn.cursor() as cur:
-            # 仅删除「采集当天」的旧数据，保留历史日期
-            today_date = snapshot_at.date()
+            # 仅删除「采集当天」的旧数据（用 UTC 时间范围，避免 DATE() 受会话时区影响）
+            start_of_day = snapshot_at
+            end_of_day = snapshot_at + timedelta(days=1)
             cur.execute(
-                'DELETE FROM github_trend_item WHERE "sourceId" = %s AND DATE("snapshotAt") = %s',
-                (source_id, today_date),
+                'DELETE FROM github_trend_item WHERE "sourceId" = %s AND "snapshotAt" >= %s AND "snapshotAt" < %s',
+                (source_id, start_of_day, end_of_day),
             )
 
             insert_sql = """
