@@ -50,43 +50,45 @@ export function Nav() {
         </svg>
         Daily Trends
       </Link>
-      <div className="lang-switch" aria-label="Language switch">
+      <div className="header-right">
+        <div className="lang-switch" aria-label="Language switch">
+          <button
+            type="button"
+            className={
+              currentLang === "en" ? "lang-btn active" : "lang-btn"
+            }
+            onClick={() => setLang("en")}
+          >
+            {t.langEn}
+          </button>
+          <button
+            type="button"
+            className={
+              currentLang === "zh" ? "lang-btn active" : "lang-btn"
+            }
+            onClick={() => setLang("zh")}
+          >
+            {t.langZh}
+          </button>
+        </div>
         <button
           type="button"
-          className={
-            currentLang === "en" ? "lang-btn active" : "lang-btn"
-          }
-          onClick={() => setLang("en")}
+          className="header-nav-toggle"
+          aria-expanded={menuOpen}
+          aria-label={menuOpen ? (currentLang === "zh" ? "关闭菜单" : "Close menu") : (currentLang === "zh" ? "打开菜单" : "Open menu")}
+          onClick={() => setMenuOpen((o) => !o)}
         >
-          {t.langEn}
-        </button>
-        <button
-          type="button"
-          className={
-            currentLang === "zh" ? "lang-btn active" : "lang-btn"
-          }
-          onClick={() => setLang("zh")}
-        >
-          {t.langZh}
+          {menuOpen ? (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          ) : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <path d="M3 12h18M3 6h18M3 18h18" />
+            </svg>
+          )}
         </button>
       </div>
-      <button
-        type="button"
-        className="header-nav-toggle"
-        aria-expanded={menuOpen}
-        aria-label={menuOpen ? (currentLang === "zh" ? "关闭菜单" : "Close menu") : (currentLang === "zh" ? "打开菜单" : "Open menu")}
-        onClick={() => setMenuOpen((o) => !o)}
-      >
-        {menuOpen ? (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        ) : (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-            <path d="M3 12h18M3 6h18M3 18h18" />
-          </svg>
-        )}
-      </button>
       <nav className={`nav-links ${menuOpen ? "is-open" : ""}`} aria-label={t.trendsLabel}>
         <Link
           href={currentLang === "zh" ? "/?lang=zh" : "/"}

@@ -74,6 +74,14 @@ header {
   }
 }
 
+/* 右侧一组：语言切换 + 手机端汉堡按钮，保证同一行不堆叠 */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 .header-inner {
   max-width: var(--max-width);
   margin: 0 auto;
@@ -85,11 +93,21 @@ header {
   flex-wrap: wrap;
 }
 
-/* 手机端：导航折叠，显示汉堡按钮 */
+/* 手机端：顶栏单行不堆叠（Logo 左 + 语言+汉堡 右），展开的菜单整行在下方 */
 @media (max-width: 768px) {
   .header-inner {
-    gap: 0.75rem;
+    gap: 0.5rem 0;
     min-height: 52px;
+    flex-wrap: wrap;
+  }
+
+  .header-inner .header-logo {
+    flex-shrink: 0;
+  }
+
+  .header-inner .header-right {
+    margin-left: auto;
+    flex-shrink: 0;
   }
 
   .header-nav-toggle {
@@ -99,7 +117,6 @@ header {
     width: 40px;
     height: 40px;
     padding: 0;
-    margin-left: auto;
     background: var(--color-bg-subtle);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
@@ -120,6 +137,7 @@ header {
   .nav-links {
     display: none;
     width: 100%;
+    flex-basis: 100%;
     flex-direction: column;
     gap: 0.25rem;
     padding: 0.5rem 0 0.75rem;
@@ -135,10 +153,6 @@ header {
     padding: 0.6rem 0.75rem;
     width: 100%;
     border-radius: var(--radius);
-  }
-
-  .lang-switch {
-    order: 1;
   }
 }
 
